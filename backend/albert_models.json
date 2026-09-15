@@ -1,0 +1,19 @@
+{
+  "source": "https://albert.api.etalab.gouv.fr/v1/models",
+  "type": "text-generation",
+  "last_verified": "2026-09-03",
+  "models": [
+    {
+      "id": "deepseek-v4-flash"
+    },
+    {
+      "id": "mistral-medium-2508"
+    },
+    {
+      "id": "qwen3-coder-30b-A3b-instruct"
+    },
+    {
+      "id": "openai/gpt-oss-120b"
+    }
+  ]
+}

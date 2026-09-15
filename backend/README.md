@@ -1,6 +1,6 @@
 ## Setup
 
-Dependencies and the virtualenv are managed with [uv](https://docs.astral.sh/uv/).
+Create a Python virtual environment and install the backend dependencies:
 
 ```bash
 uv sync           # creates .venv and installs dependencies from uv.lock (only needed after cloning or changing deps)
@@ -19,6 +19,9 @@ Copy `.env.example` to `.env` and adjust as needed:
   backend runs on a different machine than the Electron app.
 - `AUTO_CORS_ORIGINS` — comma-separated list of origins allowed to call the
   backend. Defaults to `*`.
+- `DRIVE_SESSION_ID` — development credential used for user-specific Drive
+  endpoints. Copy the value of the `drive_sessionid` cookie from an authenticated
+  local Drive session. Keep it in `.env` and never commit it.
 
 ## Structure
 
@@ -29,7 +32,7 @@ backend/src/
 ├── config.py            # Which provider/model is active, loaded from settings
 ├── providers/           # "How do I talk to a model?"
 │   ├── base.py          # Abstract interface every provider implements
-│   ├── lasuite.py       # Interface to lasuit tokens 
+│   ├── lasuite.py       # Interface to lasuit tokens
 └── agent/               # "What does the agent do with the model?"
     ├── tools/           # Folder to indivudual tool defs
     │   ├── readFile.py  # An idea
@@ -38,3 +41,49 @@ backend/src/
     ├── tools.py         # Collated all the tool calls the agent can call
     └── memory.py        # Conversation history, context management
 ```
+
+## Specialist-agent routing
+
+The orchestrator is now independent from specialist implementations:
+
+- `agent/base.py` defines the contract shared with every agent.
+- `agent/registry.py` advertises available agents and dispatches model calls.
+- `agent/drive.py` implements Drive configuration and authenticated recursive
+  item listing.
+- `providers/albert.py` contains only the Albert API client.
+- `agent/orchestrator.py` coordinates the model/agent loop and registers the
+  specialists available at runtime.
+
+See `src/agent/README.md` for the Python-agent integration contract and safety
+requirements.
+
+## Run the first agent
+
+The current orchestrator uses Albert for chat and exposes Drive configuration
+and bounded recursive item listing as model-callable tools. Create your local
+environment file from the committed template:
+
+```bash
+cp .env.example .env
+# Then set ALBERT_API_KEY in .env. ALBERT_MODEL is optional.
+
+source venv/bin/activate
+python main.py
+```
+
+The orchestrator automatically loads `backend/.env`. Existing shell environment
+variables take precedence over values in the file, and `.env` is ignored by Git.
+When `ALBERT_MODEL` is omitted, the orchestrator reads Albert's live model
+catalogue and uses the first canonical `text-generation` model id.
+
+Send a request through the backend API:
+
+```bash
+curl -s http://127.0.0.1:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Which languages does Drive support?"}]}'
+```
+
+The Electron renderer sends this same POST request. Its backend URL defaults to
+`http://127.0.0.1:8000`; copy `app/.env.example` to `app/.env` to override
+`VITE_BACKEND_URL` when needed.

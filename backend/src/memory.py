@@ -43,7 +43,7 @@ class ConversationMemory:
         Keeps only the most recent messages.
         This prevents the conversation from becoming too large.
         """
-        if len(self.messages) > self.max_messages:is 
+        if len(self.messages) > self.max_messages:
             self.messages = self.messages[-self.max_messages:]
 
     def clear(self) -> None:

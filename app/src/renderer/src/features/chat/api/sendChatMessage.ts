@@ -10,7 +10,8 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<string> 
   })
 
   if (!response.ok) {
-    throw new Error(`backend responded with ${response.status}`)
+    const error = await response.text()
+    throw new Error(`backend responded with ${response.status}${error ? `: ${error}` : ''}`)
   }
 
   const data = (await response.json()) as { reply: string }
