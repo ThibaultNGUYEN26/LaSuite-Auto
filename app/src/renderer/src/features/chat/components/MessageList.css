@@ -113,3 +113,10 @@
 .chat-message :where(ul, ol) {
   padding-left: var(--c--globals--spacings--md);
 }
+
+.chat-message-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--sm);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}

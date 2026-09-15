@@ -10,13 +10,24 @@ from schemas import ChatMessage
 
 
 class FakeAlbertClient:
+    """Fakes a streaming Albert client: one entry per step's response.
+
+    Each entry is ``{"content": str | None, "tool_calls": list | None}``.
+    Content (if any) is emitted as a single ``content`` chunk, followed by
+    the ``done`` chunk carrying the step's tool calls.
+    """
+
     def __init__(self, responses):
         self.responses = iter(responses)
         self.requests = []
 
-    def chat_completion(self, **request):
+    async def chat_completion_stream(self, **request):
         self.requests.append(deepcopy(request))
-        return next(self.responses)
+        response = next(self.responses)
+        content = response.get("content")
+        if content:
+            yield {"type": "content", "delta": content}
+        yield {"type": "done", "tool_calls": response.get("tool_calls") or []}
 
 
 class FakePythonAgent(SpecialistAgent):
@@ -40,7 +51,14 @@ class FakePythonAgent(SpecialistAgent):
         return {"status": "completed", "files_changed": 2}
 
 
-class OrchestratorAgentTests(unittest.TestCase):
+async def collect_events(agent, conversation):
+    events = []
+    async for event in agent.run_stream(conversation):
+        events.append(event)
+    return events
+
+
+class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
     def test_runtime_registry_advertises_drive_capabilities(self):
         names = {
             tool["function"]["name"]
@@ -57,26 +75,33 @@ class OrchestratorAgentTests(unittest.TestCase):
             },
         )
 
-    def test_returns_a_direct_model_answer(self):
-        albert = FakeAlbertClient([{"role": "assistant", "content": "Hello."}])
+    async def test_returns_a_direct_model_answer(self):
+        albert = FakeAlbertClient([{"content": "Hello."}])
         agent = OrchestratorAgent(
             albert,
             model="canonical-model-id",
             drive_base_url="http://drive:8071",
         )
 
-        answer = agent.run([ChatMessage(role="user", content="Hello")])
+        events = await collect_events(
+            agent, [ChatMessage(role="user", content="Hello")]
+        )
 
-        self.assertEqual(answer, "Hello.")
+        self.assertEqual(
+            [event.type for event in events],
+            ["step_start", "token", "step_complete", "final"],
+        )
+        self.assertEqual(events[-1].data, {"content": "Hello."})
         self.assertEqual(len(albert.requests), 1)
 
     @patch("agent.specialists.drive.config.get_drive_config")
-    def test_executes_drive_tool_and_returns_the_follow_up_answer(self, get_config):
+    async def test_executes_drive_tool_and_returns_the_follow_up_answer(
+        self, get_config
+    ):
         get_config.return_value = {"LANGUAGE_CODE": "fr-fr"}
         albert = FakeAlbertClient(
             [
                 {
-                    "role": "assistant",
                     "content": None,
                     "tool_calls": [
                         {
@@ -89,7 +114,7 @@ class OrchestratorAgentTests(unittest.TestCase):
                         }
                     ],
                 },
-                {"role": "assistant", "content": "Drive uses French."},
+                {"content": "Drive uses French."},
             ]
         )
         agent = OrchestratorAgent(
@@ -98,24 +123,36 @@ class OrchestratorAgentTests(unittest.TestCase):
             drive_base_url="http://drive:8071",
         )
 
-        answer = agent.run(
-            [ChatMessage(role="user", content="Which language does Drive use?")]
+        events = await collect_events(
+            agent, [ChatMessage(role="user", content="Which language does Drive use?")]
         )
 
-        self.assertEqual(answer, "Drive uses French.")
+        self.assertEqual(
+            [event.type for event in events],
+            [
+                "step_start",
+                "step_complete",
+                "tool_call_start",
+                "tool_call_result",
+                "step_start",
+                "token",
+                "step_complete",
+                "final",
+            ],
+        )
+        self.assertEqual(events[-1].data, {"content": "Drive uses French."})
         tool_message = albert.requests[1]["messages"][-1]
         self.assertEqual(tool_message["role"], "tool")
         self.assertEqual(tool_message["tool_call_id"], "call-1")
         self.assertEqual(json.loads(tool_message["content"]), {"LANGUAGE_CODE": "fr-fr"})
         get_config.assert_called_once_with("http://drive:8071")
 
-    def test_routes_a_task_to_a_registered_python_agent(self):
+    async def test_routes_a_task_to_a_registered_python_agent(self):
         python_agent = FakePythonAgent()
         registry = AgentRegistry([python_agent])
         albert = FakeAlbertClient(
             [
                 {
-                    "role": "assistant",
                     "content": None,
                     "tool_calls": [
                         {
@@ -133,7 +170,7 @@ class OrchestratorAgentTests(unittest.TestCase):
                         }
                     ],
                 },
-                {"role": "assistant", "content": "I organized the PDFs."},
+                {"content": "I organized the PDFs."},
             ]
         )
         agent = OrchestratorAgent(
@@ -142,11 +179,11 @@ class OrchestratorAgentTests(unittest.TestCase):
             registry=registry,
         )
 
-        answer = agent.run(
-            [ChatMessage(role="user", content="Organize the PDFs in Downloads")]
+        events = await collect_events(
+            agent, [ChatMessage(role="user", content="Organize the PDFs in Downloads")]
         )
 
-        self.assertEqual(answer, "I organized the PDFs.")
+        self.assertEqual(events[-1].data, {"content": "I organized the PDFs."})
         self.assertEqual(python_agent.calls[0][0]["working_directory"], "Downloads")
         self.assertEqual(
             json.loads(albert.requests[1]["messages"][-1]["content"]),
@@ -157,12 +194,11 @@ class OrchestratorAgentTests(unittest.TestCase):
         }
         self.assertEqual(advertised_names, {"python_execute"})
 
-    def test_step_limit_returns_a_partial_answer_instead_of_an_error(self):
+    async def test_step_limit_returns_a_partial_answer_instead_of_an_error(self):
         python_agent = FakePythonAgent()
         albert = FakeAlbertClient(
             [
                 {
-                    "role": "assistant",
                     "content": None,
                     "tool_calls": [
                         {
@@ -177,10 +213,7 @@ class OrchestratorAgentTests(unittest.TestCase):
                         }
                     ],
                 },
-                {
-                    "role": "assistant",
-                    "content": "I cannot check further; this count may be incomplete.",
-                },
+                {"content": "I cannot check further; this count may be incomplete."},
             ]
         )
         agent = OrchestratorAgent(
@@ -190,10 +223,13 @@ class OrchestratorAgentTests(unittest.TestCase):
             max_steps=1,
         )
 
-        answer = agent.run([ChatMessage(role="user", content="Count my images")])
+        events = await collect_events(
+            agent, [ChatMessage(role="user", content="Count my images")]
+        )
 
-        self.assertIn("cannot check further", answer)
-        self.assertEqual(albert.requests[1]["tools"], [])
+        self.assertEqual(events[-1].type, "final")
+        self.assertIn("cannot check further", events[-1].data["content"])
+        self.assertEqual(albert.requests[-1]["tools"], [])
 
 
 if __name__ == "__main__":
