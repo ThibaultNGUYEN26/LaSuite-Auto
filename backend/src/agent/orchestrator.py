@@ -6,21 +6,40 @@ import json
 from typing import Any, Protocol
 
 from agent.base import DelegationContext
-from agent.drive import DriveConfigAgent, DriveListItemsAgent, get_drive_config
+from agent.specialists.drive import (
+    DriveConfigAgent,
+    DriveListItemsAgent,
+    DriveReadPdfAgent,
+)
+from agent.specialists.local_files import (
+    LocalFilesListItemsAgent,
+    LocalFilesReadPdfAgent,
+)
 from agent.errors import AgentError, AlbertAPIError, DriveAPIError
 from agent.registry import AgentRegistry
 from config import settings
 from providers.albert import AlbertClient
 from providers.echo import EchoProvider
 from schemas import ChatMessage
+from services.drive import get_drive_config
 
 
 SYSTEM_PROMPT = (
     "You are the coordinator for La Suite Automations. Route tasks to the most "
     "appropriate registered specialist agent whenever current data or an action "
     "is required. You may call multiple agents in sequence. Do not claim an action "
-    "succeeded unless its agent result confirms it. If no available agent can do "
-    "the work, explain that limitation instead of guessing."
+    "succeeded unless its agent result confirms it. Distinguish La Suite Drive "
+    "from local files on the computer and use only the matching specialist. If no "
+    "available agent can do the work, explain that limitation instead of guessing. "
+    "When a specialist returns complete=false or a limitation, clearly tell the user "
+    "which folders or items could not be checked and do not present partial counts as "
+    "complete totals."
+)
+
+STEP_LIMIT_PROMPT = (
+    "The tool-call budget has been reached. Do not call another tool. Answer from the "
+    "results already available. Clearly state that you cannot check further whenever "
+    "the results are incomplete, depth-limited, or item-limited."
 )
 
 
@@ -95,7 +114,23 @@ class OrchestratorAgent:
                     }
                 )
 
-        raise AgentError(f"Agent exceeded its {self.max_steps}-step limit")
+        # Tool recursion is bounded, but reaching that bound is a partial-result
+        # condition rather than a server failure. Give the model one tool-free
+        # synthesis call so the user receives the data gathered so far plus a
+        # clear limitation instead of an HTTP 502.
+        messages.append({"role": "system", "content": STEP_LIMIT_PROMPT})
+        final_message = self.albert.chat_completion(
+            model=self.model,
+            messages=messages,
+            tools=[],
+        )
+        content = final_message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+        return (
+            "I reached the tool-call limit and cannot check further. "
+            "The results collected so far may be incomplete."
+        )
 
 
 _echo_provider = EchoProvider()
@@ -110,6 +145,18 @@ def build_agent_registry() -> AgentRegistry:
             DriveListItemsAgent(
                 settings.drive_base_url,
                 settings.drive_session_id,
+            ),
+            DriveReadPdfAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                max_download_bytes=settings.drive_max_download_bytes,
+                max_text_characters=settings.pdf_max_text_characters,
+            ),
+            LocalFilesListItemsAgent(settings.local_files_root),
+            LocalFilesReadPdfAgent(
+                settings.local_files_root,
+                max_read_bytes=settings.local_files_max_read_bytes,
+                max_text_characters=settings.pdf_max_text_characters,
             ),
         ]
     )
