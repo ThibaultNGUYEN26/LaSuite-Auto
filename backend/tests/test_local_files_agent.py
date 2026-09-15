@@ -49,6 +49,26 @@ class LocalFilesAgentTests(unittest.TestCase):
             self.assertEqual(result["directory"], "Downloads")
             self.assertEqual(result["items"][0]["relative_path"], "Downloads/manual.pdf")
 
+    def test_deep_folders_return_a_friendly_choice_instead_of_an_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current = root
+            for level in range(7):
+                current = current / f"level-{level}"
+                current.mkdir()
+
+            result = list_local_items(root, max_depth=99)
+
+            paths = {item["relative_path"] for item in result["items"]}
+            self.assertIn("level-0/level-1/level-2/level-3/level-4/level-5", paths)
+            self.assertNotIn(
+                "level-0/level-1/level-2/level-3/level-4/level-5/level-6",
+                paths,
+            )
+            self.assertFalse(result["complete"])
+            self.assertIn("specific folder", result["suggested_question"])
+            self.assertNotIn("depth", result["limitation"].lower())
+
     def test_rejects_paths_outside_the_configured_root(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "Downloads"

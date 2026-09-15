@@ -41,8 +41,40 @@ class AlbertClient:
             with urlopen(request, timeout=self.timeout) as response:
                 payload = json.load(response)
         except HTTPError as exc:
+            detail = ""
+            try:
+                error_payload = json.load(exc)
+                error_detail = error_payload.get("detail")
+                if isinstance(error_detail, str):
+                    detail = f": {error_detail}"
+                elif isinstance(error_detail, list):
+                    messages = [
+                        str(item.get("msg"))
+                        for item in error_detail
+                        if isinstance(item, dict) and item.get("msg")
+                    ]
+                    if messages:
+                        detail = f": {'; '.join(messages)}"
+                if not detail and isinstance(error_payload.get("message"), str):
+                    detail = f": {error_payload['message']}"
+                error_object = error_payload.get("error")
+                if not detail and isinstance(error_object, dict):
+                    error_message = error_object.get("message")
+                    if isinstance(error_message, str):
+                        detail = f": {error_message}"
+                errors = error_payload.get("errors")
+                if not detail and isinstance(errors, list):
+                    messages = [
+                        str(item.get("detail") or item.get("msg"))
+                        for item in errors
+                        if isinstance(item, dict) and (item.get("detail") or item.get("msg"))
+                    ]
+                    if messages:
+                        detail = f": {'; '.join(messages)}"
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                pass
             raise AlbertAPIError(
-                f"Albert returned HTTP {exc.code} for {method} {endpoint}"
+                f"Albert returned HTTP {exc.code} for {method} {endpoint}{detail}"
             ) from exc
         except URLError as exc:
             raise AlbertAPIError(f"Could not reach {endpoint}: {exc.reason}") from exc
@@ -55,7 +87,13 @@ class AlbertClient:
             )
         return payload
 
-    def resolve_model(self, requested_model: str | None = None) -> str:
+    def resolve_model_by_type(
+        self,
+        model_type: str,
+        requested_model: str | None = None,
+        *,
+        setting_name: str = "ALBERT_MODEL",
+    ) -> str:
         payload = self._request("models")
         models = payload.get("data")
         if not isinstance(models, list):
@@ -65,19 +103,22 @@ class AlbertClient:
             model.get("id")
             for model in models
             if isinstance(model, dict)
-            and model.get("type") == "text-generation"
+            and model.get("type") == model_type
             and isinstance(model.get("id"), str)
         ]
         if requested_model is not None:
             if requested_model not in model_ids:
                 raise AlbertAPIError(
-                    "ALBERT_MODEL must be a canonical text-generation model id; "
+                    f"{setting_name} must be a canonical {model_type} model id; "
                     f"available ids: {', '.join(model_ids) or 'none'}"
                 )
             return requested_model
         if not model_ids:
-            raise AlbertAPIError("Albert currently exposes no text-generation model")
+            raise AlbertAPIError(f"Albert currently exposes no {model_type} model")
         return model_ids[0]
+
+    def resolve_model(self, requested_model: str | None = None) -> str:
+        return self.resolve_model_by_type("text-generation", requested_model)
 
     def chat_completion(
         self,
@@ -103,3 +144,34 @@ class AlbertClient:
         if not isinstance(message, dict):
             raise AlbertAPIError("Albert returned an invalid assistant message")
         return message
+
+    def image_completion(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        data_url: str,
+    ) -> str:
+        payload = self._request(
+            "chat/completions",
+            body={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                "temperature": 0.2,
+            },
+        )
+        try:
+            content = payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise AlbertAPIError("Albert returned no image analysis") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise AlbertAPIError("Albert returned an empty image analysis")
+        return content

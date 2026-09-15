@@ -50,9 +50,13 @@ class OrchestratorAgentTests(unittest.TestCase):
             names,
             {
                 "drive_get_config",
+                "drive_create_file",
                 "drive_list_items",
+                "drive_read_image",
                 "drive_read_pdf",
                 "local_files_list_items",
+                "local_files_create_file",
+                "local_files_read_image",
                 "local_files_read_pdf",
             },
         )
@@ -179,7 +183,10 @@ class OrchestratorAgentTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "I cannot check further; this count may be incomplete.",
+                    "content": (
+                        "Some folders remain unchecked. Would you like me to focus on "
+                        "a specific folder, or show everything I found so far?"
+                    ),
                 },
             ]
         )
@@ -192,7 +199,7 @@ class OrchestratorAgentTests(unittest.TestCase):
 
         answer = agent.run([ChatMessage(role="user", content="Count my images")])
 
-        self.assertIn("cannot check further", answer)
+        self.assertIn("specific folder", answer)
         self.assertEqual(albert.requests[1]["tools"], [])
 
 

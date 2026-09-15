@@ -8,11 +8,15 @@ from typing import Any, Protocol
 from agent.base import DelegationContext
 from agent.specialists.drive import (
     DriveConfigAgent,
+    DriveCreateFileAgent,
     DriveListItemsAgent,
+    DriveReadImageAgent,
     DriveReadPdfAgent,
 )
 from agent.specialists.local_files import (
+    LocalFilesCreateFileAgent,
     LocalFilesListItemsAgent,
+    LocalFilesReadImageAgent,
     LocalFilesReadPdfAgent,
 )
 from agent.errors import AgentError, AlbertAPIError, DriveAPIError
@@ -22,6 +26,7 @@ from providers.albert import AlbertClient
 from providers.echo import EchoProvider
 from schemas import ChatMessage
 from services.drive import get_drive_config
+from services.image import AlbertImageAnalyzer
 
 
 SYSTEM_PROMPT = (
@@ -33,13 +38,19 @@ SYSTEM_PROMPT = (
     "available agent can do the work, explain that limitation instead of guessing. "
     "When a specialist returns complete=false or a limitation, clearly tell the user "
     "which folders or items could not be checked and do not present partial counts as "
-    "complete totals."
+    "complete totals. When folders remain unchecked, ask whether the user wants to "
+    "focus on a specific folder or see everything found so far. Keep this explanation "
+    "non-technical: never mention depth limits, tool calls, steps, or the backend. "
+    "Create a local or Drive file only when the user explicitly requests creation. "
+    "Never imply that an existing file was overwritten or uploaded unless the "
+    "specialist confirms success."
 )
 
 STEP_LIMIT_PROMPT = (
-    "The tool-call budget has been reached. Do not call another tool. Answer from the "
-    "results already available. Clearly state that you cannot check further whenever "
-    "the results are incomplete, depth-limited, or item-limited."
+    "Do not call another tool. Use only the results already available. If the search "
+    "is incomplete, simply say that some folders remain unchecked, then ask whether "
+    "the user wants you to focus on a specific folder or show everything found so far. "
+    "Do not mention tools, steps, limits, depth numbers, the backend, or errors."
 )
 
 
@@ -128,8 +139,8 @@ class OrchestratorAgent:
         if isinstance(content, str) and content.strip():
             return content
         return (
-            "I reached the tool-call limit and cannot check further. "
-            "The results collected so far may be incomplete."
+            "Some folders remain unchecked. Would you like me to focus on a specific "
+            "folder, or show everything I found so far?"
         )
 
 
@@ -139,9 +150,21 @@ _albert_agent: OrchestratorAgent | None = None
 
 def build_agent_registry() -> AgentRegistry:
     """Composition root: register every specialist available to the coordinator."""
+    image_analyzer = AlbertImageAnalyzer(
+        settings.albert_api_key,
+        base_url=settings.albert_base_url,
+        requested_model=settings.albert_vision_model,
+    )
     return AgentRegistry(
         [
             DriveConfigAgent(settings.drive_base_url),
+            DriveCreateFileAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                csrf_token=settings.drive_csrf_token,
+                upload_acl=settings.drive_upload_acl,
+                max_create_bytes=settings.drive_max_create_bytes,
+            ),
             DriveListItemsAgent(
                 settings.drive_base_url,
                 settings.drive_session_id,
@@ -152,11 +175,26 @@ def build_agent_registry() -> AgentRegistry:
                 max_download_bytes=settings.drive_max_download_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
             ),
+            DriveReadImageAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                image_analyzer,
+                max_download_bytes=settings.image_max_read_bytes,
+            ),
             LocalFilesListItemsAgent(settings.local_files_root),
+            LocalFilesCreateFileAgent(
+                settings.local_files_root,
+                max_create_bytes=settings.local_files_max_create_bytes,
+            ),
             LocalFilesReadPdfAgent(
                 settings.local_files_root,
                 max_read_bytes=settings.local_files_max_read_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
+            ),
+            LocalFilesReadImageAgent(
+                settings.local_files_root,
+                image_analyzer,
+                max_read_bytes=settings.image_max_read_bytes,
             ),
         ]
     )

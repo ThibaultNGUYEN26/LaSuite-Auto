@@ -22,6 +22,10 @@ Copy `.env.example` to `.env` and adjust as needed:
 - `DRIVE_SESSION_ID` — development credential used for user-specific Drive
   endpoints. Copy the value of the `drive_sessionid` cookie from an authenticated
   local Drive session. Keep it in `.env` and never commit it.
+- `DRIVE_CSRF_TOKEN` — the `csrftoken` cookie from the same authenticated Drive
+  session, used by file-creation requests.
+- `DRIVE_MAX_CREATE_BYTES` — maximum UTF-8 content size accepted by the Drive
+  creation specialist. Defaults to 1 MiB.
 
 ## Structure
 
