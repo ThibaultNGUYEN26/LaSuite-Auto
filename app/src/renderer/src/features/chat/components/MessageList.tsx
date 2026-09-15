@@ -2,6 +2,7 @@ import { Loader } from '@gouvfr-lasuite/cunningham-react'
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { appIconMarkup } from '../../../assets/appIcon'
 import type { ChatMessage } from '../types'
 import { formatRelativeTime } from '../utils/formatRelativeTime'
 import { formatThinkingDuration } from '../utils/formatThinkingDuration'
@@ -29,6 +30,11 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
     return (
       <div className="chat-messages">
         <div className="chat-empty-state">
+          <div
+            className="chat-empty-state__icon"
+            dangerouslySetInnerHTML={{ __html: appIconMarkup }}
+            aria-hidden="true"
+          />
           <h2>What is on your mind?</h2>
           <p>Ask your La Suite companion anything to get started.</p>
         </div>
