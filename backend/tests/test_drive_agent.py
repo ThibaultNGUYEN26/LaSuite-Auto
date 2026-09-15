@@ -4,8 +4,9 @@ import unittest
 from unittest.mock import patch
 
 from agent.base import DelegationContext
-from agent.drive import DriveListItemsAgent, list_drive_items
+from agent.specialists.drive import DriveListItemsAgent
 from agent.errors import DriveAPIError
+from services.drive import list_drive_items
 
 
 class FakeResponse(io.BytesIO):
@@ -17,7 +18,7 @@ class FakeResponse(io.BytesIO):
 
 
 class DriveListItemsAgentTests(unittest.TestCase):
-    @patch("agent.drive.urlopen")
+    @patch("services.drive.urlopen")
     def test_lists_authenticated_items_and_compacts_the_response(self, urlopen):
         payload = {
             "count": 1,
@@ -54,7 +55,7 @@ class DriveListItemsAgentTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["title"], "Reports")
         self.assertEqual(result["items"][0]["path"], ["Reports"])
 
-    @patch("agent.drive.urlopen")
+    @patch("services.drive.urlopen")
     def test_recursively_lists_folder_children(self, urlopen):
         folder_id = "4d57f9aa-f5b6-4581-af99-28c6f935cd2b"
         root_payload = {

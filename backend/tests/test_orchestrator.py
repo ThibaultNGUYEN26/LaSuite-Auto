@@ -41,12 +41,21 @@ class FakePythonAgent(SpecialistAgent):
 
 
 class OrchestratorAgentTests(unittest.TestCase):
-    def test_runtime_registry_advertises_both_drive_capabilities(self):
+    def test_runtime_registry_advertises_drive_capabilities(self):
         names = {
             tool["function"]["name"]
             for tool in build_agent_registry().tool_definitions()
         }
-        self.assertEqual(names, {"drive_get_config", "drive_list_items"})
+        self.assertEqual(
+            names,
+            {
+                "drive_get_config",
+                "drive_list_items",
+                "drive_read_pdf",
+                "local_files_list_items",
+                "local_files_read_pdf",
+            },
+        )
 
     def test_returns_a_direct_model_answer(self):
         albert = FakeAlbertClient([{"role": "assistant", "content": "Hello."}])
@@ -61,7 +70,7 @@ class OrchestratorAgentTests(unittest.TestCase):
         self.assertEqual(answer, "Hello.")
         self.assertEqual(len(albert.requests), 1)
 
-    @patch("agent.drive.get_drive_config")
+    @patch("agent.specialists.drive.config.get_drive_config")
     def test_executes_drive_tool_and_returns_the_follow_up_answer(self, get_config):
         get_config.return_value = {"LANGUAGE_CODE": "fr-fr"}
         albert = FakeAlbertClient(
@@ -147,6 +156,44 @@ class OrchestratorAgentTests(unittest.TestCase):
             tool["function"]["name"] for tool in albert.requests[0]["tools"]
         }
         self.assertEqual(advertised_names, {"python_execute"})
+
+    def test_step_limit_returns_a_partial_answer_instead_of_an_error(self):
+        python_agent = FakePythonAgent()
+        albert = FakeAlbertClient(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-python",
+                            "type": "function",
+                            "function": {
+                                "name": "python_execute",
+                                "arguments": json.dumps(
+                                    {"task": "Count images", "working_directory": "."}
+                                ),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "I cannot check further; this count may be incomplete.",
+                },
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            registry=AgentRegistry([python_agent]),
+            max_steps=1,
+        )
+
+        answer = agent.run([ChatMessage(role="user", content="Count my images")])
+
+        self.assertIn("cannot check further", answer)
+        self.assertEqual(albert.requests[1]["tools"], [])
 
 
 if __name__ == "__main__":

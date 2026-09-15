@@ -1,8 +1,56 @@
 # Specialist agent integration
 
-The orchestrator is a coordinator. It does not implement filesystem or Python
-execution itself. Instead, it advertises registered specialist agents to the
-model as tools and dispatches the selected call through `AgentRegistry`.
+The orchestrator is a coordinator. It does not implement Drive, filesystem, or
+Python execution itself. Instead, it advertises registered specialist agents to
+the model as tools and dispatches the selected call through `AgentRegistry`.
+
+Specialists are grouped by domain instead of being placed beside the
+orchestrator:
+
+```text
+agent/
+  orchestrator.py
+  specialists/
+    drive/
+      config.py
+      list_items.py
+      read_pdf.py
+    local_files/
+      list_items.py
+      read_pdf.py
+services/
+  drive.py
+  local_files.py
+  pdf.py
+```
+
+An agent owns one model-facing capability and its input validation. A service
+owns reusable API details. `DriveReadPdfAgent` adapts the `tools/readFile.py`
+behavior to the PDF bytes returned by the authenticated Drive downloader.
+
+## Reading a Drive PDF
+
+The coordinator now advertises three Drive tools:
+
+- `drive_list_items` discovers files recursively and returns their UUIDs.
+- `drive_read_pdf` downloads one UUID with the authenticated Drive session and
+  reads its selectable text entirely in backend memory.
+- `drive_get_config` reads public instance configuration.
+
+For a request such as "Summarize the PDF named budget.pdf in my Drive", Albert
+can first call `drive_list_items`, select the matching PDF UUID, then call
+`drive_read_pdf`. Scanned image-only PDFs return an explicit no-extractable-text
+error.
+
+## Reading a local PDF
+
+`local_files_list_items` lists any relative directory below the configured
+`LOCAL_FILES_ROOT` (the current user's home folder by default) and returns safe
+relative paths. For example, the coordinator can select `Downloads`, `Documents`,
+or `Desktop` with the `directory` argument.
+`local_files_read_pdf` accepts one of those relative paths, reads the PDF into
+memory, and uses the same text extractor as the Drive specialist. Absolute
+paths and paths that escape the configured root are rejected.
 
 ## Routing flow
 

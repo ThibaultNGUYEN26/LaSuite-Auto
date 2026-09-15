@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -18,6 +19,18 @@ class Settings:
     albert_model: str | None = os.environ.get("ALBERT_MODEL") or None
     drive_base_url: str = os.environ.get("DRIVE_BASE_URL", "http://localhost:8071")
     drive_session_id: str | None = os.environ.get("DRIVE_SESSION_ID") or None
+    drive_max_download_bytes: int = int(
+        os.environ.get("DRIVE_MAX_DOWNLOAD_BYTES", str(20 * 1024 * 1024))
+    )
+    pdf_max_text_characters: int = int(
+        os.environ.get("PDF_MAX_TEXT_CHARACTERS", "80000")
+    )
+    local_files_root: Path = Path(
+        os.environ.get("LOCAL_FILES_ROOT", str(Path.home()))
+    ).expanduser()
+    local_files_max_read_bytes: int = int(
+        os.environ.get("LOCAL_FILES_MAX_READ_BYTES", str(20 * 1024 * 1024))
+    )
 
     # Full URL (protocol + host + port) the backend binds to and that the
     # frontend uses to reach it. Shared with the frontend via the same
