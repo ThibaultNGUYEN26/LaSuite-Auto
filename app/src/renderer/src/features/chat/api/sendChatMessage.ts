@@ -1,6 +1,9 @@
 import type { ChatMessage } from '../types'
 
-const BACKEND_URL = 'http://localhost:8000'
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL ?? 'http://127.0.0.1:8000').replace(
+  /\/$/,
+  ''
+)
 
 export async function sendChatMessage(messages: ChatMessage[]): Promise<string> {
   const response = await fetch(`${BACKEND_URL}/api/chat`, {
@@ -10,7 +13,8 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<string> 
   })
 
   if (!response.ok) {
-    throw new Error(`backend responded with ${response.status}`)
+    const error = await response.text()
+    throw new Error(`backend responded with ${response.status}${error ? `: ${error}` : ''}`)
   }
 
   const data = (await response.json()) as { reply: string }

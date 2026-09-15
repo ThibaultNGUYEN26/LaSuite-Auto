@@ -1,11 +1,12 @@
 ## Setup
 
-Dependencies and the virtualenv are managed with [uv](https://docs.astral.sh/uv/).
+Create a Python virtual environment and install the backend dependencies:
 
 ```bash
-uv sync           # creates .venv and installs dependencies from uv.lock (only needed after cloning or changing deps)
-uv add <package>  # add a new dependency (updates pyproject.toml + uv.lock)
-uv run main.py    # run the dev server with reload, on http://127.0.0.1:8000
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+python main.py  # http://127.0.0.1:8000
 ```
 
 ## Structure
@@ -26,3 +27,34 @@ backend/src/
     ├── tools.py         # Collated all the tool calls the agent can call
     └── memory.py        # Conversation history, context management
 ```
+
+## Run the first agent
+
+The current orchestrator uses Albert for chat and exposes Drive's public
+configuration endpoint as a model-callable tool. Create your local environment
+file from the committed template:
+
+```bash
+cp .env.example .env
+# Then set ALBERT_API_KEY in .env. ALBERT_MODEL is optional.
+
+source venv/bin/activate
+python main.py
+```
+
+The orchestrator automatically loads `backend/.env`. Existing shell environment
+variables take precedence over values in the file, and `.env` is ignored by Git.
+When `ALBERT_MODEL` is omitted, the orchestrator reads Albert's live model
+catalogue and uses the first canonical `text-generation` model id.
+
+Send a request through the backend API:
+
+```bash
+curl -s http://127.0.0.1:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Which languages does Drive support?"}]}'
+```
+
+The Electron renderer sends this same POST request. Its backend URL defaults to
+`http://127.0.0.1:8000`; copy `app/.env.example` to `app/.env` to override
+`VITE_BACKEND_URL` when needed.

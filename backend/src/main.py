@@ -1,7 +1,8 @@
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from agent.orchestrator import run
+from agent.orchestrator import AgentError, run
 from config import settings
 from schemas import ChatRequest, ChatResponse
 
@@ -22,5 +23,8 @@ def health() -> dict[str, str]:
 
 @app.post("/api/chat")
 def chat(request: ChatRequest) -> ChatResponse:
-    reply = run(request.messages)
+    try:
+        reply = run(request.messages)
+    except AgentError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return ChatResponse(reply=reply)
