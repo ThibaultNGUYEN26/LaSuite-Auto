@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+
+import httpx
 
 from agent.errors import AlbertAPIError
 
@@ -120,30 +123,90 @@ class AlbertClient:
     def resolve_model(self, requested_model: str | None = None) -> str:
         return self.resolve_model_by_type("text-generation", requested_model)
 
-    def chat_completion(
+    async def chat_completion_stream(
         self,
         *,
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        payload = self._request(
-            "chat/completions",
-            body={
-                "model": model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.2,
-            },
-        )
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream one chat completion, yielding content deltas as they arrive.
+
+        Yields ``{"type": "content", "delta": str}`` for each content
+        fragment, followed by exactly one
+        ``{"type": "done", "tool_calls": list[dict]}`` once the stream ends,
+        with any streamed tool-call fragments reassembled by index.
+        """
+        endpoint = urljoin(f"{self.base_url}/", "chat/completions")
+        headers = {
+            "Accept": "text/event-stream",
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": 0.2,
+            "stream": True,
+        }
+
+        tool_call_fragments: dict[int, dict[str, Any]] = {}
         try:
-            message = payload["choices"][0]["message"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise AlbertAPIError("Albert returned no assistant message") from exc
-        if not isinstance(message, dict):
-            raise AlbertAPIError("Albert returned an invalid assistant message")
-        return message
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST", endpoint, headers=headers, json=payload
+                ) as response:
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        raise AlbertAPIError(
+                            f"Albert returned HTTP {response.status_code} for "
+                            f"POST {endpoint}: {body.decode(errors='replace')}"
+                        )
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError as exc:
+                            raise AlbertAPIError(
+                                "Albert returned an invalid stream chunk"
+                            ) from exc
+                        try:
+                            delta = chunk["choices"][0]["delta"]
+                        except (KeyError, IndexError, TypeError):
+                            continue
+                        content = delta.get("content")
+                        if content:
+                            yield {"type": "content", "delta": content}
+                        for fragment in delta.get("tool_calls") or []:
+                            index = fragment.get("index", 0)
+                            entry = tool_call_fragments.setdefault(
+                                index,
+                                {
+                                    "id": None,
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                },
+                            )
+                            if fragment.get("id"):
+                                entry["id"] = fragment["id"]
+                            function_fragment = fragment.get("function") or {}
+                            if function_fragment.get("name"):
+                                entry["function"]["name"] += function_fragment["name"]
+                            if function_fragment.get("arguments"):
+                                entry["function"]["arguments"] += function_fragment[
+                                    "arguments"
+                                ]
+        except httpx.HTTPError as exc:
+            raise AlbertAPIError(f"Could not reach {endpoint}: {exc}") from exc
+
+        tool_calls = [tool_call_fragments[i] for i in sorted(tool_call_fragments)]
+        yield {"type": "done", "tool_calls": tool_calls}
 
     def image_completion(
         self,

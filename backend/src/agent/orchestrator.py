@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from agent.base import DelegationContext
+from agent.specialists.code import RunPythonAgent
 from agent.specialists.drive import (
     DriveConfigAgent,
     DriveCreateFileAgent,
@@ -20,6 +22,7 @@ from agent.specialists.local_files import (
     LocalFilesReadPdfAgent,
 )
 from agent.errors import AgentError, AlbertAPIError, DriveAPIError
+from agent.events import AgentEvent
 from agent.registry import AgentRegistry
 from config import settings
 from providers.albert import AlbertClient
@@ -55,13 +58,13 @@ STEP_LIMIT_PROMPT = (
 
 
 class ChatCompletionClient(Protocol):
-    def chat_completion(
+    def chat_completion_stream(
         self,
         *,
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-    ) -> dict[str, Any]: ...
+    ) -> AsyncIterator[dict[str, Any]]: ...
 
 
 class OrchestratorAgent:
@@ -87,26 +90,47 @@ class OrchestratorAgent:
         self.registry = registry
         self.max_steps = max_steps
 
-    def run(self, conversation: list[ChatMessage]) -> str:
+    async def run_stream(
+        self, conversation: list[ChatMessage]
+    ) -> AsyncIterator[AgentEvent]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             *(message.model_dump() for message in conversation),
         ]
         context = DelegationContext(conversation=tuple(conversation))
 
-        for _ in range(self.max_steps):
-            assistant_message = self.albert.chat_completion(
+        for step in range(1, self.max_steps + 1):
+            yield AgentEvent("step_start", {"step": step, "max_steps": self.max_steps})
+
+            content_parts: list[str] = []
+            tool_calls: list[dict[str, Any]] = []
+            async for chunk in self.albert.chat_completion_stream(
                 model=self.model,
                 messages=messages,
                 tools=self.registry.tool_definitions(),
-            )
+            ):
+                if chunk["type"] == "content":
+                    content_parts.append(chunk["delta"])
+                    yield AgentEvent("token", {"step": step, "delta": chunk["delta"]})
+                elif chunk["type"] == "done":
+                    tool_calls = chunk["tool_calls"]
+
+            content = "".join(content_parts) or None
+            assistant_message: dict[str, Any] = {"role": "assistant", "content": content}
+            if tool_calls:
+                assistant_message["tool_calls"] = tool_calls
             messages.append(assistant_message)
-            tool_calls = assistant_message.get("tool_calls") or []
+
+            yield AgentEvent(
+                "step_complete",
+                {"step": step, "content": content, "tool_calls": tool_calls},
+            )
+
             if not tool_calls:
-                content = assistant_message.get("content")
                 if not isinstance(content, str) or not content.strip():
                     raise AgentError("Albert returned an empty final answer")
-                return content
+                yield AgentEvent("final", {"content": content})
+                return
 
             for tool_call in tool_calls:
                 try:
@@ -116,7 +140,26 @@ class OrchestratorAgent:
                     arguments = function.get("arguments", "{}")
                 except (KeyError, TypeError) as exc:
                     raise AgentError("Albert returned an invalid tool call") from exc
+
+                yield AgentEvent(
+                    "tool_call_start",
+                    {
+                        "step": step,
+                        "tool_call_id": tool_call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    },
+                )
                 result = self.registry.dispatch(name, arguments, context)
+                yield AgentEvent(
+                    "tool_call_result",
+                    {
+                        "step": step,
+                        "tool_call_id": tool_call_id,
+                        "name": name,
+                        "result": result,
+                    },
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -128,20 +171,33 @@ class OrchestratorAgent:
         # Tool recursion is bounded, but reaching that bound is a partial-result
         # condition rather than a server failure. Give the model one tool-free
         # synthesis call so the user receives the data gathered so far plus a
-        # clear limitation instead of an HTTP 502.
+        # clear limitation instead of an error.
+        synthesis_step = self.max_steps + 1
+        yield AgentEvent(
+            "step_start", {"step": synthesis_step, "max_steps": self.max_steps}
+        )
         messages.append({"role": "system", "content": STEP_LIMIT_PROMPT})
-        final_message = self.albert.chat_completion(
+        content_parts = []
+        async for chunk in self.albert.chat_completion_stream(
             model=self.model,
             messages=messages,
             tools=[],
-        )
-        content = final_message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content
-        return (
+        ):
+            if chunk["type"] == "content":
+                content_parts.append(chunk["delta"])
+                yield AgentEvent(
+                    "token", {"step": synthesis_step, "delta": chunk["delta"]}
+                )
+
+        content = "".join(content_parts).strip() or (
             "Some folders remain unchecked. Would you like me to focus on a specific "
             "folder, or show everything I found so far?"
         )
+        yield AgentEvent(
+            "step_complete",
+            {"step": synthesis_step, "content": content, "tool_calls": []},
+        )
+        yield AgentEvent("final", {"content": content})
 
 
 _echo_provider = EchoProvider()
@@ -196,6 +252,7 @@ def build_agent_registry() -> AgentRegistry:
                 image_analyzer,
                 max_read_bytes=settings.image_max_read_bytes,
             ),
+            RunPythonAgent(),
         ]
     )
 
@@ -220,11 +277,14 @@ def _get_albert_agent() -> OrchestratorAgent:
     return _albert_agent
 
 
-def run(messages: list[ChatMessage]) -> str:
+async def run_stream(messages: list[ChatMessage]) -> AsyncIterator[AgentEvent]:
     if settings.provider == "echo":
-        return _echo_provider.generate(messages)
+        yield AgentEvent("final", {"content": _echo_provider.generate(messages)})
+        return
     if settings.provider == "albert":
-        return _get_albert_agent().run(messages)
+        async for event in _get_albert_agent().run_stream(messages):
+            yield event
+        return
     raise AgentError(f"Unknown AUTO_PROVIDER: {settings.provider}")
 
 
@@ -238,5 +298,5 @@ __all__ = [
     "OrchestratorAgent",
     "build_agent_registry",
     "get_drive_config",
-    "run",
+    "run_stream",
 ]

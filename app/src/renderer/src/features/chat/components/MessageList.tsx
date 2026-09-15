@@ -2,6 +2,7 @@ import { Loader } from '@gouvfr-lasuite/cunningham-react'
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { appIconMarkup } from '../../../assets/appIcon'
 import type { ChatMessage } from '../types'
 import { formatRelativeTime } from '../utils/formatRelativeTime'
 import { formatThinkingDuration } from '../utils/formatThinkingDuration'
@@ -29,6 +30,11 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
     return (
       <div className="chat-messages">
         <div className="chat-empty-state">
+          <div
+            className="chat-empty-state__icon"
+            dangerouslySetInnerHTML={{ __html: appIconMarkup }}
+            aria-hidden="true"
+          />
           <h2>What is on your mind?</h2>
           <p>Ask your La Suite companion anything to get started.</p>
         </div>
@@ -47,7 +53,12 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
                 : formatRelativeTime(message.createdAt, now)}
             </span>
             <div className="chat-message" data-role={message.role}>
-              {message.role === 'assistant' ? (
+              {message.role === 'assistant' && message.status ? (
+                <span className="chat-message-status">
+                  <Loader size="small" />
+                  {message.status}
+                </span>
+              ) : message.role === 'assistant' ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
               ) : (
                 message.content
@@ -56,13 +67,6 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
           </div>
         </div>
       ))}
-      {isSending && (
-        <div className="chat-message-row" data-role="assistant">
-          <div className="chat-message" data-role="assistant">
-            <Loader size="small" />
-          </div>
-        </div>
-      )}
       <div ref={bottomRef} />
     </div>
   )
