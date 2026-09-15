@@ -7,4 +7,4 @@ class EchoProvider(Provider):
 
     def generate(self, messages: list[ChatMessage]) -> str:
         last_user_message = messages[-1].content if messages else ""
-        return f"You said: {last_user_message}"
+        return f"## In markdown\n_You said_: {last_user_message}"

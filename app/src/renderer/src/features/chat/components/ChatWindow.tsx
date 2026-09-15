@@ -1,7 +1,9 @@
-import { Button, Loader, TextArea } from '@gouvfr-lasuite/cunningham-react'
-import { FormEvent, KeyboardEvent, useState } from 'react'
+import { FormEvent, useState } from 'react'
 import { sendChatMessage } from '../api/sendChatMessage'
 import type { ChatMessage } from '../types'
+import './ChatWindow.css'
+import Composer from './Composer'
+import MessageList from './MessageList'
 
 function ChatWindow(): React.JSX.Element {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -41,48 +43,12 @@ function ChatWindow(): React.JSX.Element {
     }
   }
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit(e as unknown as FormEvent)
-    }
-  }
-
   return (
-    <div className="chat-wraper">
+    <div className="chat-wrapper">
       <div className="chat">
-      <div className="chat-messages">
-        {messages.length === 0 ? (
-          <p className="chat-empty">Ask your La Suite companion anything to get started.</p>
-        ) : (
-          messages.map((message) => (
-            <div key={message.id} className="chat-message" data-role={message.role}>
-              {message.content}
-            </div>
-          ))
-        )}
-        {isSending && (
-          <div className="chat-message" data-role="assistant">
-            <Loader size="small" />
-          </div>
-        )}
+        <MessageList messages={messages} isSending={isSending} />
+        <Composer value={input} onChange={setInput} onSubmit={handleSubmit} canSubmit={canSubmit} />
       </div>
-
-      <form className="chat-composer" onSubmit={handleSubmit}>
-        <TextArea
-          label="Message"
-          hideLabel
-          placeholder="Write a message…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-        />
-        <Button type="submit" disabled={!canSubmit}>
-          Send
-        </Button>
-      </form>
-    </div>
     </div>
   )
 }
