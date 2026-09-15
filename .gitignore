@@ -50,6 +50,7 @@ coverage/
 *.swo
 *~
 *.bak
+.vscode
 
 # System
 .DS_Store
