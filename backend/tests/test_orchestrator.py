@@ -1,13 +1,11 @@
 import json
-import os
-import tempfile
 import unittest
 from copy import deepcopy
-from pathlib import Path
 from unittest.mock import patch
 
+from agent.base import DelegationContext, SpecialistAgent
 from agent.orchestrator import OrchestratorAgent
-from config import load_env_file
+from agent.registry import AgentRegistry
 from schemas import ChatMessage
 
 
@@ -21,19 +19,28 @@ class FakeAlbertClient:
         return next(self.responses)
 
 
-class OrchestratorAgentTests(unittest.TestCase):
-    def test_loads_env_file_without_overriding_existing_values(self):
-        with tempfile.TemporaryDirectory() as directory:
-            env_file = Path(directory) / ".env"
-            env_file.write_text(
-                'ALBERT_API_KEY="from-file"\nDRIVE_BASE_URL=http://drive:8071\n',
-                encoding="utf-8",
-            )
-            with patch.dict(os.environ, {"ALBERT_API_KEY": "already-set"}, clear=True):
-                load_env_file(env_file)
-                self.assertEqual(os.environ["ALBERT_API_KEY"], "already-set")
-                self.assertEqual(os.environ["DRIVE_BASE_URL"], "http://drive:8071")
+class FakePythonAgent(SpecialistAgent):
+    name = "python_execute"
+    description = "Run an approved Python task against files in a working directory."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "task": {"type": "string"},
+            "working_directory": {"type": "string"},
+        },
+        "required": ["task", "working_directory"],
+        "additionalProperties": False,
+    }
 
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, arguments: dict, context: DelegationContext) -> dict:
+        self.calls.append((arguments, context))
+        return {"status": "completed", "files_changed": 2}
+
+
+class OrchestratorAgentTests(unittest.TestCase):
     def test_returns_a_direct_model_answer(self):
         albert = FakeAlbertClient([{"role": "assistant", "content": "Hello."}])
         agent = OrchestratorAgent(
@@ -47,7 +54,7 @@ class OrchestratorAgentTests(unittest.TestCase):
         self.assertEqual(answer, "Hello.")
         self.assertEqual(len(albert.requests), 1)
 
-    @patch("agent.orchestrator.get_drive_config")
+    @patch("agent.drive.get_drive_config")
     def test_executes_drive_tool_and_returns_the_follow_up_answer(self, get_config):
         get_config.return_value = {"LANGUAGE_CODE": "fr-fr"}
         albert = FakeAlbertClient(
@@ -85,6 +92,54 @@ class OrchestratorAgentTests(unittest.TestCase):
         self.assertEqual(tool_message["tool_call_id"], "call-1")
         self.assertEqual(json.loads(tool_message["content"]), {"LANGUAGE_CODE": "fr-fr"})
         get_config.assert_called_once_with("http://drive:8071")
+
+    def test_routes_a_task_to_a_registered_python_agent(self):
+        python_agent = FakePythonAgent()
+        registry = AgentRegistry([python_agent])
+        albert = FakeAlbertClient(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-python",
+                            "type": "function",
+                            "function": {
+                                "name": "python_execute",
+                                "arguments": json.dumps(
+                                    {
+                                        "task": "Group PDFs by year",
+                                        "working_directory": "Downloads",
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "I organized the PDFs."},
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            registry=registry,
+        )
+
+        answer = agent.run(
+            [ChatMessage(role="user", content="Organize the PDFs in Downloads")]
+        )
+
+        self.assertEqual(answer, "I organized the PDFs.")
+        self.assertEqual(python_agent.calls[0][0]["working_directory"], "Downloads")
+        self.assertEqual(
+            json.loads(albert.requests[1]["messages"][-1]["content"]),
+            {"status": "completed", "files_changed": 2},
+        )
+        advertised_names = {
+            tool["function"]["name"] for tool in albert.requests[0]["tools"]
+        }
+        self.assertEqual(advertised_names, {"python_execute"})
 
 
 if __name__ == "__main__":

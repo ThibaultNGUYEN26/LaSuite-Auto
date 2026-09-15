@@ -1,9 +1,6 @@
 import type { ChatMessage } from '../types'
 
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL ?? 'http://127.0.0.1:8000').replace(
-  /\/$/,
-  ''
-)
+const BACKEND_URL = import.meta.env.BACKEND_URL ?? 'http://127.0.0.1:8000'
 
 export async function sendChatMessage(messages: ChatMessage[]): Promise<string> {
   const response = await fetch(`${BACKEND_URL}/api/chat`, {

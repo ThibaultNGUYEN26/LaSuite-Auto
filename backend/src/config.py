@@ -1,32 +1,9 @@
 import os
-from pathlib import Path
+from urllib.parse import urlparse
 
+from dotenv import load_dotenv
 
-def load_env_file(path: Path | None = None) -> None:
-    """Load simple KEY=VALUE entries without overriding shell variables."""
-    env_path = path or Path(__file__).resolve().parents[1] / ".env"
-    if not env_path.is_file():
-        return
-
-    for line_number, raw_line in enumerate(
-        env_path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line.removeprefix("export ").lstrip()
-        key, separator, value = line.partition("=")
-        key = key.strip()
-        if not separator or not key.isidentifier():
-            raise ValueError(f"Invalid .env entry on line {line_number}")
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
-
-
-load_env_file()
+load_dotenv()
 
 
 class Settings:
@@ -40,6 +17,15 @@ class Settings:
     )
     albert_model: str | None = os.environ.get("ALBERT_MODEL") or None
     drive_base_url: str = os.environ.get("DRIVE_BASE_URL", "http://localhost:8071")
+
+    # Full URL (protocol + host + port) the backend binds to and that the
+    # frontend uses to reach it. Shared with the frontend via the same
+    # BACKEND_URL env var name so both sides agree on where the backend lives,
+    # even when it isn't running on the same machine as the frontend.
+    backend_url: str = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+    _parsed_backend_url = urlparse(backend_url)
+    host: str = _parsed_backend_url.hostname or "127.0.0.1"
+    port: int = _parsed_backend_url.port or 8000
 
 
 settings = Settings()
