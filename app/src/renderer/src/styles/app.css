@@ -1,0 +1,58 @@
+body {
+  margin: initial;
+}
+
+.app-logo {
+  font-weight: 700; /* Find a cool font from their UI kit */
+}
+
+.app-left-panel {
+  padding: 0 var(--c--globals--spacings--sm)
+}
+
+.chat-wraper {
+  padding: var(--c--globals--spacings--md);
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--c--globals--spacings--md);
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--sm);
+}
+
+.chat-empty {
+  color: var(--c--theme--colors--greyscale-600);
+}
+
+.chat-message {
+  max-width: 70%;
+  align-self: flex-start;
+  padding: var(--c--globals--spacings--sm) var(--c--globals--spacings--md);
+  border-radius: var(--c--globals--spacings--sm);
+  background-color: var(--c--theme--colors--greyscale-100);
+  white-space: pre-wrap;
+}
+
+.chat-message[data-role='user'] {
+  align-self: flex-end;
+  background-color: var(--c--theme--colors--primary-200);
+}
+
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--c--globals--spacings--sm);
+}
+
+.chat-composer > *:first-child {
+  flex: 1;
+}
