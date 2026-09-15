@@ -36,6 +36,6 @@ For detailed setup, architecture, and reference information, see:
 
 ```
 backend/
-frontend/
+app/
 docs/
 ```
