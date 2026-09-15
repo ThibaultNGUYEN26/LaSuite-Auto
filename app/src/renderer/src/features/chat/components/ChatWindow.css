@@ -1,0 +1,12 @@
+.chat-wrapper {
+  height: 100%;
+  background-color: var(--c--contextuals--background--surface--secondary);
+}
+
+.chat {
+  --chat-content-max-width: 750px;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
