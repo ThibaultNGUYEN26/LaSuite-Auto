@@ -1,19 +1,42 @@
 {
   "source": "https://albert.api.etalab.gouv.fr/v1/models",
-  "type": "text-generation",
-  "last_verified": "2026-09-03",
+  "last_verified": "2026-09-15",
   "models": [
     {
-      "id": "deepseek-v4-flash"
+      "id": "deepseek-v4-flash",
+      "type": "text-generation"
     },
     {
-      "id": "mistral-medium-2508"
+      "id": "mistral-medium-2508",
+      "type": "text-generation"
     },
     {
-      "id": "qwen3-coder-30b-A3b-instruct"
+      "id": "qwen3-coder-30b-A3b-instruct",
+      "type": "text-generation"
     },
     {
-      "id": "openai/gpt-oss-120b"
+      "id": "openai/gpt-oss-120b",
+      "type": "text-generation"
+    },
+    {
+      "id": "ministral-3-8b-instruct-2512",
+      "type": "image-text-to-text"
+    },
+    {
+      "id": "mistral-small-3-2-24b-instruct-2506",
+      "type": "image-text-to-text"
+    },
+    {
+      "id": "lightonocr-2-1b",
+      "type": "image-text-to-text"
+    },
+    {
+      "id": "gemma-4-31b-it",
+      "type": "image-text-to-text"
+    },
+    {
+      "id": "mistral-medium-3-5",
+      "type": "image-text-to-text"
     }
   ]
 }

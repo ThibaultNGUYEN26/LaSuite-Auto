@@ -14,12 +14,16 @@ agent/
     drive/
       config.py
       list_items.py
+      read_image.py
       read_pdf.py
     local_files/
+      create_file.py
       list_items.py
+      read_image.py
       read_pdf.py
 services/
   drive.py
+  image.py
   local_files.py
   pdf.py
 ```
@@ -51,6 +55,34 @@ or `Desktop` with the `directory` argument.
 `local_files_read_pdf` accepts one of those relative paths, reads the PDF into
 memory, and uses the same text extractor as the Drive specialist. Absolute
 paths and paths that escape the configured root are rejected.
+
+## Reading images
+
+`drive_read_image` and `local_files_read_image` load PNG, JPEG, GIF, or WebP
+bytes into backend memory and send them directly to an Albert
+`image-text-to-text` model. The text-generation model remains the coordinator;
+it does not inspect the pixels itself. Set `ALBERT_VISION_MODEL` to a canonical
+vision model ID, or leave it empty to select the first compatible model from
+Albert's live catalogue. Only the textual analysis is returned to the
+orchestrator; raw image data is not copied into tool results.
+
+## Creating local files
+
+`local_files_create_file` creates a new UTF-8 text file with a requested
+extension inside an existing directory under `LOCAL_FILES_ROOT`. It is exposed
+only for explicit file-creation requests. Existing files are never overwritten,
+directories are not created implicitly, and content size is bounded by
+`LOCAL_FILES_MAX_CREATE_BYTES`.
+
+## Creating Drive files
+
+`drive_create_file` uploads a new UTF-8 text file either to the top of My Files
+or to a folder selected by UUID. It follows Drive's create, signed upload, and
+upload-complete sequence. Configure `DRIVE_CSRF_TOKEN` from the same authenticated
+browser session as `DRIVE_SESSION_ID`; `DRIVE_MAX_CREATE_BYTES` bounds content size.
+The storage ACL is read from Drive automatically, unless `DRIVE_UPLOAD_ACL` overrides it.
+The specialist creates text content with extensions such as `.txt`, `.md`, `.csv`,
+or `.json`; changing an extension does not generate a binary PDF or DOCX document.
 
 ## Routing flow
 

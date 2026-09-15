@@ -5,11 +5,18 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 
 from agent.errors import LocalFilesError
 
 MAX_TRAVERSAL_DEPTH = 5
+EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$")
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
 
 
 def _root_directory(root: Path) -> Path:
@@ -117,10 +124,7 @@ def list_local_items(
     item_limit_reached = truncated or bool(pending)
     limitations: list[str] = []
     if depth_limited:
-        limitations.append(
-            f"Folder traversal stopped at depth {MAX_TRAVERSAL_DEPTH}; deeper folders "
-            "were not checked."
-        )
+        limitations.append("Some folders are nested further inside and were not checked yet.")
     if item_limit_reached:
         limitations.append(f"Only the first {limit} items were returned.")
     return {
@@ -135,18 +139,22 @@ def list_local_items(
         "truncated": depth_limited or item_limit_reached,
         "complete": not depth_limited and not item_limit_reached,
         "limitation": " ".join(limitations) or None,
+        "suggested_question": (
+            "Would you like me to focus on a specific folder, or show everything "
+            "I found so far?"
+            if depth_limited
+            else None
+        ),
         "items": items,
     }
 
 
-def read_local_pdf(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
+def read_local_file(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
     path = resolve_local_file(root, relative_path)
-    if path.suffix.lower() != ".pdf":
-        raise LocalFilesError("Unsupported file type. Only PDF files are supported.")
     size = path.stat().st_size
     if size > max_bytes:
         raise LocalFilesError(
-            f"Local PDF exceeds the configured {max_bytes}-byte read limit"
+            f"Local file exceeds the configured {max_bytes}-byte read limit"
         )
     try:
         data = path.read_bytes()
@@ -156,8 +164,70 @@ def read_local_pdf(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
         raise LocalFilesError("File not found") from exc
     if len(data) > max_bytes:
         raise LocalFilesError(
-            f"Local PDF exceeds the configured {max_bytes}-byte read limit"
+            f"Local file exceeds the configured {max_bytes}-byte read limit"
         )
+    return data
+
+
+def read_local_pdf(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
+    path = resolve_local_file(root, relative_path)
+    if path.suffix.lower() != ".pdf":
+        raise LocalFilesError("Unsupported file type. Only PDF files are supported.")
+    data = read_local_file(root, relative_path, max_bytes=max_bytes)
     if not data.startswith(b"%PDF-"):
         raise LocalFilesError("The selected local file is not a valid PDF")
     return data
+
+
+def create_local_text_file(
+    root: Path,
+    *,
+    directory: str,
+    file_name: str,
+    extension: str,
+    content: str,
+    max_bytes: int,
+) -> dict[str, Any]:
+    """Create one UTF-8 file without overwriting an existing path."""
+    target_directory = resolve_local_directory(root, directory)
+    clean_name = file_name.strip()
+    clean_extension = extension.strip().removeprefix(".")
+    if (
+        not clean_name
+        or clean_name in {".", ".."}
+        or Path(clean_name).name != clean_name
+        or any(character in clean_name for character in '<>:"/\\|?*')
+        or clean_name.endswith((" ", "."))
+    ):
+        raise LocalFilesError("file_name contains invalid characters")
+    if clean_name.upper() in WINDOWS_RESERVED_NAMES:
+        raise LocalFilesError("file_name is reserved by Windows")
+    if not EXTENSION_PATTERN.fullmatch(clean_extension):
+        raise LocalFilesError("extension must contain only letters, numbers, _ or -")
+
+    encoded = content.encode("utf-8")
+    if len(encoded) > max_bytes:
+        raise LocalFilesError(
+            f"File content exceeds the configured {max_bytes}-byte creation limit"
+        )
+    target = (target_directory / f"{clean_name}.{clean_extension}").resolve()
+    resolved_root = _root_directory(root)
+    try:
+        relative_path = target.relative_to(resolved_root).as_posix()
+    except ValueError as exc:
+        raise LocalFilesError("Target path escapes the configured local-files root") from exc
+    try:
+        with target.open("x", encoding="utf-8", newline="") as file:
+            file.write(content)
+    except FileExistsError as exc:
+        raise LocalFilesError(
+            "A file with this name already exists. Choose another name."
+        ) from exc
+    except PermissionError as exc:
+        raise LocalFilesError("Permission denied") from exc
+    return {
+        "status": "created",
+        "relative_path": relative_path,
+        "extension": f".{clean_extension}",
+        "bytes_written": len(encoded),
+    }

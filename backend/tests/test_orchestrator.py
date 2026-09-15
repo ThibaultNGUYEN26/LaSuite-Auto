@@ -68,10 +68,15 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             names,
             {
                 "drive_get_config",
+                "drive_create_file",
                 "drive_list_items",
+                "drive_read_image",
                 "drive_read_pdf",
                 "local_files_list_items",
+                "local_files_create_file",
+                "local_files_read_image",
                 "local_files_read_pdf",
+                "run_python",
             },
         )
 
@@ -213,7 +218,12 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                         }
                     ],
                 },
-                {"content": "I cannot check further; this count may be incomplete."},
+                {
+                    "content": (
+                        "Some folders remain unchecked. Would you like me to focus on "
+                        "a specific folder, or show everything I found so far?"
+                    ),
+                },
             ]
         )
         agent = OrchestratorAgent(
@@ -228,7 +238,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(events[-1].type, "final")
-        self.assertIn("cannot check further", events[-1].data["content"])
+        self.assertIn("specific folder", events[-1].data["content"])
         self.assertEqual(albert.requests[-1]["tools"], [])
 
 

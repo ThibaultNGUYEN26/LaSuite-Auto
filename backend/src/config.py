@@ -17,8 +17,14 @@ class Settings:
         "ALBERT_BASE_URL", "https://albert.api.etalab.gouv.fr/v1"
     )
     albert_model: str | None = os.environ.get("ALBERT_MODEL") or None
+    albert_vision_model: str | None = os.environ.get("ALBERT_VISION_MODEL") or None
     drive_base_url: str = os.environ.get("DRIVE_BASE_URL", "http://localhost:8071")
     drive_session_id: str | None = os.environ.get("DRIVE_SESSION_ID") or None
+    drive_csrf_token: str | None = os.environ.get("DRIVE_CSRF_TOKEN") or None
+    drive_upload_acl: str | None = os.environ.get("DRIVE_UPLOAD_ACL") or None
+    drive_max_create_bytes: int = int(
+        os.environ.get("DRIVE_MAX_CREATE_BYTES", str(1024 * 1024))
+    )
     drive_max_download_bytes: int = int(
         os.environ.get("DRIVE_MAX_DOWNLOAD_BYTES", str(20 * 1024 * 1024))
     )
@@ -30,6 +36,12 @@ class Settings:
     ).expanduser()
     local_files_max_read_bytes: int = int(
         os.environ.get("LOCAL_FILES_MAX_READ_BYTES", str(20 * 1024 * 1024))
+    )
+    local_files_max_create_bytes: int = int(
+        os.environ.get("LOCAL_FILES_MAX_CREATE_BYTES", str(1024 * 1024))
+    )
+    image_max_read_bytes: int = int(
+        os.environ.get("IMAGE_MAX_READ_BYTES", str(10 * 1024 * 1024))
     )
 
     # Full URL (protocol + host + port) the backend binds to and that the
