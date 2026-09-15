@@ -19,23 +19,37 @@ function ChatWindow(): React.JSX.Element {
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: input.trim()
+      content: input.trim(),
+      createdAt: Date.now()
     }
     const nextMessages = [...messages, userMessage]
     setMessages(nextMessages)
     setInput('')
     setIsSending(true)
 
+    const askedAt = Date.now()
+
     try {
       const reply = await sendChatMessage(nextMessages)
-      setMessages([...nextMessages, { id: crypto.randomUUID(), role: 'assistant', content: reply }])
+      setMessages([
+        ...nextMessages,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: reply,
+          createdAt: Date.now(),
+          thinkingMs: Date.now() - askedAt
+        }
+      ])
     } catch (error) {
       setMessages([
         ...nextMessages,
         {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `Something went wrong reaching the backend: ${(error as Error).message}`
+          content: `Something went wrong reaching the backend: ${(error as Error).message}`,
+          createdAt: Date.now(),
+          thinkingMs: Date.now() - askedAt
         }
       ])
     } finally {

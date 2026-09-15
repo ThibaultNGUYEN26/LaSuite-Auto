@@ -31,17 +31,6 @@ function Composer({ value, onChange, onSubmit, canSubmit }: ComposerProps): Reac
             onKeyDown={handleKeyDown}
           />
           <div className="chat-composer-actions">
-            <div className="chat-composer-actions-left">
-              <Button
-                variant="tertiary"
-                color="neutral"
-                size="nano"
-                disabled
-                icon={<Icon name="attach_file" size={IconSize.SMALL} />}
-              >
-                Attach file
-              </Button>
-            </div>
             <Button
               type="submit"
               variant="primary"
