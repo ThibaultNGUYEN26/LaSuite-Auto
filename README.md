@@ -1,50 +1,41 @@
-# LaSuite-Automations
+# Auto: AI Assistant for La Suite
 
-With this folder structure you can then open the `docs/laSuiteAuto.code-workspace` workspace file with vscode to have all three folders open at once.
-```
--LaSuite-Automations
--drive
--converstaions
-```
+> An intelligent AI assistant that connects to La Suite tools to answer questions and automate workflows.
 
-> :warning: unauthenticated rate limit
+## 🎯 What is Auto?
 
-You need to login to the podman cli, you can create a dockerhub account that then use that to login. If you auth with github for the account, on dockerhub there is a section to reset the password, do that so you can login after. 
+**Auto** is an AI-powered orchestrator designed to work seamlessly with La Suite applications. It leverages Model Context Protocol (MCP) to access multiple La Suite tools and can:
 
-```bash
-podman login dockerhub.io
-```
+- **Answer Questions:** Query Drive, Messages, Conversations, and other La Suite apps to provide informed responses
+- **Automate Tasks:** Execute multi-step workflows by orchestrating APIs across different services
+- **Understand Context:** Maintain conversation history and leverage files, emails, and structured data from La Suite
 
-## Drive
+## 🚀 Key Features
 
-[github.com/suitenumerique/drive](https://github.com/suitenumerique/drive)
+- 🤖 **Multi-LLM Support:** Supports different LLM backends with capabilities for text, image, and file processing
+- 🔗 **La Suite Integration:** Native connections to Drive, Messages, Conversations, Docs, Meet, and Grist via MCP
+- 🧠 **Intelligent Orchestration:** Automatically breaks down complex tasks and executes them across multiple services
+- 💾 **Stateful Conversations:** Maintains memory of previous interactions for context-aware responses
+- 🛠️ **Extensible Tools:** Modular architecture for adding new capabilities and tool integrations
 
-Once cloned do a `make bootstrap`
+## 📋 Use Cases
 
-You might need to modify a line the makefile to get postgres to launch
+- **Email Organization:** Auto receives files in emails and intelligently downloads and organizes them in Drive
+- **Information Retrieval:** Ask Auto questions about your data across La Suite and get instant answers
+- **Workflow Automation:** Define tasks and let Auto execute them across multiple La Suite services
+- **Content Analysis:** Process files, images, and documents using multi-modal LLM capabilities
 
-The compose command, right at the top of the file should be like this::w
+## 📚 Documentation
 
-```makefile
-COMPOSE                 = docker compose
-```
+For detailed setup, architecture, and reference information, see:
 
-## Help launching Conversations
+- **[Setup & Technical Docs](./docs/driveAPI.md)** - Environment setup for the Drive API
 
-[github.com/suitenumerique/conversations](https://github.com/suitenumerique/conversations)
 
-Once cloned do a `make build`
-
-To get it to build, you need to modify the compose.yml so it's cmpatible with podman, which we have on forty2 computers.
-
-At the bottom of the `compose.yml` copypast this to include the default network, which apparently does not come with podman by default..
+## 🏗️ Project Structure
 
 ```
-networks:
-  default:
-    driver: bridge
-
-  lasuite:
-    name: lasuite-network
-    driver: bridge
+backend/
+frontend/
+docs/
 ```
