@@ -1,0 +1,1 @@
+declare module '@gouvfr-lasuite/ui-kit/style'

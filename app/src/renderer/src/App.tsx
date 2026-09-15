@@ -1,15 +1,20 @@
-import '@gouvfr-lasuite/ui-kit/style'
-import '@gouvfr-lasuite/ui-kit/fonts/Marianne'
-import { CunninghamProvider } from '@gouvfr-lasuite/ui-kit'
+import { CunninghamProvider, MainLayout } from '@gouvfr-lasuite/ui-kit'
+import ChatWindow from './features/chat/components/ChatWindow'
 
 function App(): React.JSX.Element {
-  const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
-
   return (
     <CunninghamProvider theme="dsfr-light">
-      <main style={{ padding: 'var(--c--globals--spacings--lg)' }}>
-        <h1>Auto says hi</h1>
-      </main>
+      <MainLayout
+        icon={<span className="app-logo">Auto</span>}
+        leftPanelContent={
+          <div className="app-left-panel">
+            <h2>Conversations</h2>
+            <p className="app-left-panel__hint">History coming soon.</p>
+          </div>
+        }
+      >
+        <ChatWindow />
+      </MainLayout>
     </CunninghamProvider>
   )
 }
