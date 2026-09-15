@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from agent.base import DelegationContext
+from agent.specialists.code import RunPythonAgent
 from agent.specialists.drive import (
     DriveConfigAgent,
     DriveListItemsAgent,
@@ -213,6 +214,7 @@ def build_agent_registry() -> AgentRegistry:
                 max_read_bytes=settings.local_files_max_read_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
             ),
+            RunPythonAgent(),
         ]
     )
 

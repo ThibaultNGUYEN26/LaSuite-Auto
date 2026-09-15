@@ -17,5 +17,9 @@ class LocalFilesError(SpecialistAgentError):
     """A local-files operation could not be completed safely."""
 
 
+class CodeExecutionError(SpecialistAgentError):
+    """A code-execution operation could not be completed safely."""
+
+
 class AlbertAPIError(AgentError):
     """Albert could not return a usable response."""
