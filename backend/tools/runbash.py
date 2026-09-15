@@ -1,3 +1,6 @@
+import subprocess
+from pydantic import BaseModel
+
 class ToolCall(BaseModel):
     tool: Literal["readFile", "runbash", "runpython"]
     args: dict[str, Any]

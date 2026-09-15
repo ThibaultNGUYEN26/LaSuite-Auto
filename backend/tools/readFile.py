@@ -1,3 +1,8 @@
+from pydantic import BaseModel
+from typing import Literal, Optional, Any
+from pypdf import PdfReader
+from pathlib import Path
+
 class ToolCall(BaseModel):
     tool: Literal["readFile", "runbash", "runpython"]
     args: dict[str, Any]
