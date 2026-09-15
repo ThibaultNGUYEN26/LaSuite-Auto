@@ -1,0 +1,56 @@
+# Python venv
+.venv/
+venv/
+env/
+
+# python cacbe
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# python tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# React / Node.js
+node_modules/
+.next/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Conf and secret
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.envrc
+
+# Logs
+*.log
+
+# DB local
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+
+# System
+.DS_Store
+Thumbs.db
