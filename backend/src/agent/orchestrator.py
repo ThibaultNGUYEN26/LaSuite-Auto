@@ -6,7 +6,7 @@ import json
 from typing import Any, Protocol
 
 from agent.base import DelegationContext
-from agent.drive import DriveConfigAgent, get_drive_config
+from agent.drive import DriveConfigAgent, DriveListItemsAgent, get_drive_config
 from agent.errors import AgentError, AlbertAPIError, DriveAPIError
 from agent.registry import AgentRegistry
 from config import settings
@@ -104,7 +104,15 @@ _albert_agent: OrchestratorAgent | None = None
 
 def build_agent_registry() -> AgentRegistry:
     """Composition root: register every specialist available to the coordinator."""
-    return AgentRegistry([DriveConfigAgent(settings.drive_base_url)])
+    return AgentRegistry(
+        [
+            DriveConfigAgent(settings.drive_base_url),
+            DriveListItemsAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+            ),
+        ]
+    )
 
 
 def _get_albert_agent() -> OrchestratorAgent:

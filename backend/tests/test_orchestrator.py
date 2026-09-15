@@ -4,7 +4,7 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from agent.base import DelegationContext, SpecialistAgent
-from agent.orchestrator import OrchestratorAgent
+from agent.orchestrator import OrchestratorAgent, build_agent_registry
 from agent.registry import AgentRegistry
 from schemas import ChatMessage
 
@@ -41,6 +41,13 @@ class FakePythonAgent(SpecialistAgent):
 
 
 class OrchestratorAgentTests(unittest.TestCase):
+    def test_runtime_registry_advertises_both_drive_capabilities(self):
+        names = {
+            tool["function"]["name"]
+            for tool in build_agent_registry().tool_definitions()
+        }
+        self.assertEqual(names, {"drive_get_config", "drive_list_items"})
+
     def test_returns_a_direct_model_answer(self):
         albert = FakeAlbertClient([{"role": "assistant", "content": "Hello."}])
         agent = OrchestratorAgent(

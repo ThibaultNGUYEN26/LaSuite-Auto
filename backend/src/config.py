@@ -17,6 +17,7 @@ class Settings:
     )
     albert_model: str | None = os.environ.get("ALBERT_MODEL") or None
     drive_base_url: str = os.environ.get("DRIVE_BASE_URL", "http://localhost:8071")
+    drive_session_id: str | None = os.environ.get("DRIVE_SESSION_ID") or None
 
     # Full URL (protocol + host + port) the backend binds to and that the
     # frontend uses to reach it. Shared with the frontend via the same

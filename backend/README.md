@@ -19,6 +19,9 @@ Copy `.env.example` to `.env` and adjust as needed:
   backend runs on a different machine than the Electron app.
 - `AUTO_CORS_ORIGINS` — comma-separated list of origins allowed to call the
   backend. Defaults to `*`.
+- `DRIVE_SESSION_ID` — development credential used for user-specific Drive
+  endpoints. Copy the value of the `drive_sessionid` cookie from an authenticated
+  local Drive session. Keep it in `.env` and never commit it.
 
 ## Structure
 
@@ -45,7 +48,8 @@ The orchestrator is now independent from specialist implementations:
 
 - `agent/base.py` defines the contract shared with every agent.
 - `agent/registry.py` advertises available agents and dispatches model calls.
-- `agent/drive.py` implements the current Drive configuration capability.
+- `agent/drive.py` implements Drive configuration and authenticated recursive
+  item listing.
 - `providers/albert.py` contains only the Albert API client.
 - `agent/orchestrator.py` coordinates the model/agent loop and registers the
   specialists available at runtime.
@@ -55,9 +59,9 @@ requirements.
 
 ## Run the first agent
 
-The current orchestrator uses Albert for chat and exposes Drive's public
-configuration endpoint as a model-callable tool. Create your local environment
-file from the committed template:
+The current orchestrator uses Albert for chat and exposes Drive configuration
+and bounded recursive item listing as model-callable tools. Create your local
+environment file from the committed template:
 
 ```bash
 cp .env.example .env
