@@ -55,5 +55,16 @@ class ChatStreamEndpointTests(unittest.TestCase):
         self.assertIn("boom", events[-1][1])
 
 
+class NewConversationEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_acknowledges_a_new_conversation(self):
+        response = self.client.post("/api/conversations/new")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+
 if __name__ == "__main__":
     unittest.main()

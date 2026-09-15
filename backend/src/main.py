@@ -23,6 +23,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/api/conversations/new")
+def new_conversation() -> dict[str, str]:
+    """Acknowledge a new-conversation request.
+
+    Chat history is kept client-side and sent in full on every request, so
+    there is nothing to create server-side yet; this exists as the hook for
+    the "New conversation" button and future server-side persistence.
+    """
+    return {"status": "ok"}
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     """Stream orchestrator progress and answer tokens as Server-Sent Events.

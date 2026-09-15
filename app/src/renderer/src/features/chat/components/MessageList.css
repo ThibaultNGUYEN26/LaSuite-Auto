@@ -137,3 +137,96 @@
   gap: var(--c--globals--spacings--sm);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
+
+.chat-trace {
+  margin-bottom: var(--c--globals--spacings--sm);
+}
+
+.chat-trace-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.chat-trace-summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-trace-summary__arrow {
+  flex: none;
+  transition: transform 0.15s ease;
+}
+
+.chat-trace[open] > .chat-trace-summary .chat-trace-summary__arrow {
+  transform: rotate(90deg);
+}
+
+.chat-trace-list {
+  margin: var(--c--globals--spacings--sm) 0 0 0;
+  padding: 0 0 0 var(--c--globals--spacings--md);
+  border-left: 2px solid var(--c--contextuals--border--semantic--neutral--primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--sm);
+}
+
+.chat-trace-entry {
+  list-style: none;
+  font-size: var(--c--theme--font--sizes--xs);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.chat-trace-entry[data-kind='step'] {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.chat-trace-entry__name {
+  font-weight: 600;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  margin-bottom: var(--c--globals--spacings--xs);
+}
+
+.chat-trace-value {
+  margin-top: var(--c--globals--spacings--xs);
+}
+
+.chat-trace-entry__value {
+  margin: 0;
+  padding: var(--c--globals--spacings--xs) var(--c--globals--spacings--sm);
+  border-radius: var(--c--globals--spacings--xs);
+  background-color: var(--c--contextuals--background--surface--tertiary);
+  overflow: hidden auto;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 8em;
+}
+
+.chat-trace-entry__value[data-expanded='true'] {
+  max-height: none;
+}
+
+.chat-trace-entry__value[data-kind='result'] {
+  border-left: 2px solid var(--c--contextuals--border--semantic--success--primary);
+}
+
+.chat-trace-value__toggle {
+  display: block;
+  margin-top: var(--c--globals--spacings--xs);
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--c--theme--font--sizes--xs);
+  color: var(--c--contextuals--content--semantic--info--primary);
+  cursor: pointer;
+}
+
+.chat-trace-value__toggle:hover {
+  text-decoration: underline;
+}

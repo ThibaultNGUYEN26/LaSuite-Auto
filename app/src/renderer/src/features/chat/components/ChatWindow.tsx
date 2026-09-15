@@ -53,9 +53,17 @@ function ChatWindow(): React.JSX.Element {
     const onEvent = (event: StreamEvent): void => {
       switch (event.type) {
         case 'step_start':
-          patchMessage(assistantMessage.id, {
-            status: `Thinking (step ${event.data.step})…`
-          })
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === assistantMessage.id
+                ? {
+                    ...m,
+                    status: `Thinking (step ${event.data.step})…`,
+                    trace: [...(m.trace ?? []), { type: 'step', step: event.data.step }]
+                  }
+                : m
+            )
+          )
           break
         case 'token':
           setMessages((current) =>
@@ -67,9 +75,43 @@ function ChatWindow(): React.JSX.Element {
           )
           break
         case 'tool_call_start':
-          patchMessage(assistantMessage.id, { status: `Calling ${event.data.name}…` })
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === assistantMessage.id
+                ? {
+                    ...m,
+                    status: `Calling ${event.data.name}…`,
+                    trace: [
+                      ...(m.trace ?? []),
+                      {
+                        type: 'tool_call',
+                        toolCallId: event.data.tool_call_id,
+                        step: event.data.step,
+                        name: event.data.name,
+                        arguments: event.data.arguments
+                      }
+                    ]
+                  }
+                : m
+            )
+          )
           break
         case 'tool_call_result':
+          setMessages((current) =>
+            current.map((m) =>
+              m.id === assistantMessage.id
+                ? {
+                    ...m,
+                    trace: (m.trace ?? []).map((entry) =>
+                      entry.type === 'tool_call' && entry.toolCallId === event.data.tool_call_id
+                        ? { ...entry, result: event.data.result }
+                        : entry
+                    )
+                  }
+                : m
+            )
+          )
+          break
         case 'step_complete':
           break
         case 'final':
