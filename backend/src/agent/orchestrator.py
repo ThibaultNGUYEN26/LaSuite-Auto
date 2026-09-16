@@ -26,10 +26,11 @@ from agent.specialists.grist import GristImportCsvAgent, GristListWorkspacesAgen
 from agent.errors import AgentError, AlbertAPIError, DriveAPIError
 from agent.events import AgentEvent
 from agent.registry import AgentRegistry
+from agent.workflow_synthesizer import evaluate_workflow_suggestion
 from config import settings
 from providers.albert import AlbertClient
 from providers.echo import EchoProvider
-from schemas import ChatMessage
+from schemas import ChatMessage, WorkflowDraft
 from services.drive import get_drive_config
 from services.image import AlbertImageAnalyzer
 
@@ -105,6 +106,7 @@ class OrchestratorAgent:
             *(message.model_dump() for message in conversation),
         ]
         context = DelegationContext(conversation=tuple(conversation))
+        used_specialist = False
 
         for step in range(1, self.max_steps + 1):
             yield AgentEvent("step_start", {"step": step, "max_steps": self.max_steps})
@@ -137,8 +139,13 @@ class OrchestratorAgent:
                 if not isinstance(content, str) or not content.strip():
                     raise AgentError("Albert returned an empty final answer")
                 yield AgentEvent("final", {"content": content})
+                async for event in self._suggest_workflow(
+                    conversation, content, used_specialist
+                ):
+                    yield event
                 return
 
+            used_specialist = True
             for tool_call in tool_calls:
                 try:
                     tool_call_id = tool_call["id"]
@@ -205,6 +212,38 @@ class OrchestratorAgent:
             {"step": synthesis_step, "content": content, "tool_calls": []},
         )
         yield AgentEvent("final", {"content": content})
+        async for event in self._suggest_workflow(conversation, content, used_specialist):
+            yield event
+
+    async def _suggest_workflow(
+        self,
+        conversation: list[ChatMessage],
+        final_content: str,
+        used_specialist: bool,
+    ) -> AsyncIterator[AgentEvent]:
+        """Best-effort: propose saving this turn as a workflow.
+
+        Only turns that delegated to a specialist are even worth asking the
+        model about (a cheap pre-filter); the model then makes the actual
+        judgement call on whether the task is concrete and repeatable enough
+        to suggest. A drafting failure never disrupts the chat turn that
+        already completed.
+        """
+        if not used_specialist:
+            return
+        try:
+            full_conversation = [
+                *conversation,
+                ChatMessage(role="assistant", content=final_content),
+            ]
+            suggestion = await evaluate_workflow_suggestion(
+                full_conversation, albert=self.albert, model=self.model
+            )
+        except Exception:
+            return
+        if not suggestion.applicable:
+            return
+        yield AgentEvent("workflow_suggested", suggestion.draft.model_dump())
 
 
 _echo_provider = EchoProvider()
@@ -318,6 +357,25 @@ async def run_stream(messages: list[ChatMessage]) -> AsyncIterator[AgentEvent]:
     raise AgentError(f"Unknown AUTO_PROVIDER: {settings.provider}")
 
 
+async def draft_workflow_from_messages(messages: list[ChatMessage]) -> WorkflowDraft:
+    """Generalize a conversation into a Workflow draft, for the manual save path.
+
+    The user explicitly asked to save this, so the applicability judgement
+    that gates the proactive suggestion doesn't apply here — always return
+    the model's best-effort draft.
+    """
+    if settings.provider == "albert" and settings.albert_api_key:
+        agent = _get_albert_agent()
+        suggestion = await evaluate_workflow_suggestion(
+            messages, albert=agent.albert, model=agent.model
+        )
+    else:
+        suggestion = await evaluate_workflow_suggestion(
+            messages, albert=None, model=None
+        )
+    return suggestion.draft
+
+
 # Preserve imports used by existing callers while implementation lives in
 # focused modules.
 __all__ = [
@@ -327,6 +385,7 @@ __all__ = [
     "DriveAPIError",
     "OrchestratorAgent",
     "build_agent_registry",
+    "draft_workflow_from_messages",
     "get_drive_config",
     "run_stream",
 ]

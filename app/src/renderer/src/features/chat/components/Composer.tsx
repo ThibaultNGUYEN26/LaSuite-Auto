@@ -1,6 +1,6 @@
 import { Button } from '@gouvfr-lasuite/cunningham-react'
-import { Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
-import { FormEvent, KeyboardEvent } from 'react'
+import { DropdownMenu, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
+import { FormEvent, KeyboardEvent, useState } from 'react'
 import './Composer.css'
 
 type ComposerProps = {
@@ -8,9 +8,20 @@ type ComposerProps = {
   onChange: (value: string) => void
   onSubmit: (e: FormEvent) => void
   canSubmit: boolean
+  onSaveAsWorkflow?: () => void
+  isSavingWorkflow?: boolean
 }
 
-function Composer({ value, onChange, onSubmit, canSubmit }: ComposerProps): React.JSX.Element {
+function Composer({
+  value,
+  onChange,
+  onSubmit,
+  canSubmit,
+  onSaveAsWorkflow,
+  isSavingWorkflow
+}: ComposerProps): React.JSX.Element {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -31,6 +42,32 @@ function Composer({ value, onChange, onSubmit, canSubmit }: ComposerProps): Reac
             onKeyDown={handleKeyDown}
           />
           <div className="chat-composer-actions">
+            {onSaveAsWorkflow ? (
+              <DropdownMenu
+                isOpen={isMenuOpen}
+                onOpenChange={setIsMenuOpen}
+                options={[
+                  {
+                    label: 'Save as workflow',
+                    isDisabled: isSavingWorkflow,
+                    callback: () => {
+                      setIsMenuOpen(false)
+                      onSaveAsWorkflow()
+                    }
+                  }
+                ]}
+              >
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  size="small"
+                  className="chat-composer-more"
+                  icon={<Icon name="more_horiz" size={IconSize.SMALL} />}
+                  aria-label="More actions"
+                  onClick={() => setIsMenuOpen((open) => !open)}
+                />
+              </DropdownMenu>
+            ) : null}
             <Button
               type="submit"
               variant="primary"

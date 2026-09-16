@@ -56,6 +56,7 @@ class Settings:
     image_max_read_bytes: int = int(
         os.environ.get("IMAGE_MAX_READ_BYTES", str(10 * 1024 * 1024))
     )
+    workflows_db_path: str = os.environ.get("WORKFLOWS_DB_PATH", "./data/workflows.db")
 
     # Full URL (protocol + host + port) the backend binds to and that the
     # frontend uses to reach it. Shared with the frontend via the same

@@ -1,3 +1,14 @@
+export type TraceEntry =
+  | { type: 'step'; step: number }
+  | {
+      type: 'tool_call'
+      toolCallId: string
+      step: number
+      name: string
+      arguments: unknown
+      result?: unknown
+    }
+
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
@@ -9,6 +20,10 @@ export type ChatMessage = {
   status?: string
   /** True while this assistant message is still receiving stream events. */
   streaming?: boolean
+  /** Ordered log of steps/tool calls performed while producing this message, shown in a trace dropdown. */
+  trace?: TraceEntry[]
+  /** Sent to the backend as conversation context but not rendered (e.g. a workflow's instructions). */
+  hidden?: boolean
 }
 
 export type StreamEvent =
@@ -28,3 +43,11 @@ export type StreamEvent =
     }
   | { type: 'final'; data: { content: string } }
   | { type: 'error'; data: { message: string; error_type: string } }
+  | { type: 'workflow_suggested'; data: WorkflowDraft }
+
+export type WorkflowDraft = {
+  name: string
+  description: string
+  instructions: string
+  input_question: string
+}
