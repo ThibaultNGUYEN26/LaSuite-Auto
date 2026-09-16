@@ -4,8 +4,15 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from agent.base import DelegationContext, SpecialistAgent
-from agent.orchestrator import OrchestratorAgent, build_agent_registry
+from agent.blocks import (
+    AgentBlock,
+    BlockRegistry,
+    WorkflowManifest,
+    build_agent_registry,
+)
+from agent.orchestrator import OrchestratorAgent
 from agent.registry import AgentRegistry
+from agent.specialists.drive import DriveConfigAgent
 from schemas import ChatMessage
 
 
@@ -59,7 +66,7 @@ async def collect_events(agent, conversation):
 
 
 class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
-    def test_runtime_registry_advertises_drive_capabilities(self):
+    def test_runtime_registry_advertises_discovered_capabilities(self):
         names = {
             tool["function"]["name"]
             for tool in build_agent_registry().tool_definitions()
@@ -88,7 +95,6 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         agent = OrchestratorAgent(
             albert,
             model="canonical-model-id",
-            drive_base_url="http://drive:8071",
         )
 
         events = await collect_events(
@@ -128,7 +134,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         agent = OrchestratorAgent(
             albert,
             model="canonical-model-id",
-            drive_base_url="http://drive:8071",
+            registry=AgentRegistry([DriveConfigAgent("http://drive:8071")]),
         )
 
         events = await collect_events(
@@ -201,6 +207,67 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             tool["function"]["name"] for tool in albert.requests[0]["tools"]
         }
         self.assertEqual(advertised_names, {"python_execute"})
+
+    async def test_selects_blocks_before_advertising_detailed_tools(self):
+        python_agent = FakePythonAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="python",
+                    description="Perform Python-based transformations.",
+                    agents=(python_agent,),
+                    workflows=(
+                        WorkflowManifest(
+                            name="python.transform",
+                            description="Transform supplied data with Python.",
+                            capabilities=("python_execute",),
+                        ),
+                    ),
+                )
+            ]
+        )
+        albert = FakeAlbertClient(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "id": "select-1",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps({"blocks": ["python"]}),
+                            },
+                        }
+                    ]
+                },
+                {"content": "I can handle that."},
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            block_registry=blocks,
+        )
+
+        events = await collect_events(
+            agent, [ChatMessage(role="user", content="Process this data")]
+        )
+
+        selection_tools = albert.requests[0]["tools"]
+        self.assertEqual(
+            selection_tools[0]["function"]["name"],
+            "select_capability_blocks",
+        )
+        detailed_tools = albert.requests[1]["tools"]
+        self.assertEqual(
+            [tool["function"]["name"] for tool in detailed_tools],
+            ["python_execute"],
+        )
+        self.assertIn(
+            "python.transform",
+            albert.requests[1]["messages"][0]["content"],
+        )
+        self.assertEqual(events[-1].data, {"content": "I can handle that."})
 
     async def test_step_limit_returns_a_partial_answer_instead_of_an_error(self):
         python_agent = FakePythonAgent()

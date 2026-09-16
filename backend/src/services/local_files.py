@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import mimetypes
 from pathlib import Path
 import re
 from typing import Any
 
+from agent.artifacts import Artifact
 from agent.errors import LocalFilesError
 
 MAX_TRAVERSAL_DEPTH = 5
@@ -107,8 +109,7 @@ def list_local_items(
             if not is_directory and not is_file:
                 continue
             relative_path = resolved_child.relative_to(resolved_root).as_posix()
-            items.append(
-                {
+            item = {
                     "name": child.name,
                     "type": "folder" if is_directory else "file",
                     "relative_path": relative_path,
@@ -119,7 +120,18 @@ def list_local_items(
                     ).isoformat(),
                     "depth": depth,
                 }
-            )
+            if is_file:
+                item["artifact"] = Artifact(
+                    kind="file",
+                    location="local",
+                    reference=relative_path,
+                    media_type=(
+                        mimetypes.guess_type(child.name)[0]
+                        or "application/octet-stream"
+                    ),
+                    name=child.name,
+                ).tool_value()
+            items.append(item)
             if recursive and is_directory and depth < max_depth:
                 pending.append((resolved_child, depth + 1))
             elif recursive and is_directory and depth >= max_depth:
@@ -231,9 +243,17 @@ def create_local_text_file(
         ) from exc
     except PermissionError as exc:
         raise LocalFilesError("Permission denied") from exc
+    artifact = Artifact(
+        kind="file",
+        location="local",
+        reference=relative_path,
+        media_type=mimetypes.guess_type(target.name)[0] or "text/plain",
+        name=target.name,
+    )
     return {
         "status": "created",
         "relative_path": relative_path,
         "extension": f".{clean_extension}",
         "bytes_written": len(encoded),
+        "artifact": artifact.tool_value(),
     }

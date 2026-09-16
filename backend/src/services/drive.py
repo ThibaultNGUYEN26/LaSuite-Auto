@@ -11,6 +11,7 @@ from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from uuid import UUID
 
+from agent.artifacts import Artifact
 from agent.errors import DriveAPIError
 
 MAX_TRAVERSAL_DEPTH = 5
@@ -154,8 +155,20 @@ def list_drive_items(
                 item_path = [*parent_path, str(name)]
                 compact_item = {field: item.get(field) for field in fields}
                 compact_item.update({"parent_id": parent_id, "depth": depth, "path": item_path})
-                items.append(compact_item)
                 item_id = item.get("id")
+                if item.get("type") != "folder" and isinstance(item_id, str):
+                    compact_item["artifact"] = Artifact(
+                        kind="file",
+                        location="drive",
+                        reference=item_id,
+                        media_type=(
+                            item.get("mimetype")
+                            if isinstance(item.get("mimetype"), str)
+                            else "application/octet-stream"
+                        ),
+                        name=str(name),
+                    ).tool_value()
+                items.append(compact_item)
                 if (
                     recursive and depth < max_depth and item.get("type") == "folder"
                     and isinstance(item_id, str)
@@ -388,6 +401,13 @@ def create_drive_file(
         finalize_endpoint, data=b"", headers=headers, method="POST"
     )
     _read_json(finalize_request, service="Drive", timeout=timeout)
+    artifact = Artifact(
+        kind="file",
+        location="drive",
+        reference=item_id,
+        media_type=content_type,
+        name=item.get("filename") or filename,
+    )
     return {
         "status": "created",
         "id": item_id,
@@ -396,4 +416,5 @@ def create_drive_file(
         "parent_id": parent_id,
         "bytes_written": len(data),
         "url_permalink": item.get("url_permalink"),
+        "artifact": artifact.tool_value(),
     }

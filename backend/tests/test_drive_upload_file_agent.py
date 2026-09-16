@@ -85,6 +85,31 @@ class DriveUploadFileAgentTests(unittest.TestCase):
                     DelegationContext(conversation=()),
                 )
 
+    @patch("agent.specialists.drive.upload_file.resolve_drive_upload_acl")
+    @patch("agent.specialists.drive.upload_file.create_drive_file")
+    def test_consumes_a_typed_local_file_artifact(self, create_file, resolve_acl):
+        resolve_acl.return_value = "private"
+        create_file.return_value = {"status": "created"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "report.pdf").write_bytes(b"%PDF-typed")
+
+            self._agent(root).execute(
+                {
+                    "artifact": {
+                        "kind": "file",
+                        "location": "local",
+                        "reference": "report.pdf",
+                        "media_type": "application/pdf",
+                        "name": "report.pdf",
+                        "metadata": {},
+                    }
+                },
+                DelegationContext(conversation=()),
+            )
+
+        self.assertEqual(create_file.call_args.kwargs["data"], b"%PDF-typed")
+
 
 if __name__ == "__main__":
     unittest.main()

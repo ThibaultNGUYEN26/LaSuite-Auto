@@ -8,6 +8,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from agent.artifacts import Artifact
 from agent.base import DelegationContext, SpecialistAgent
 from agent.errors import GristAPIError, LocalFilesError
 from services.drive import download_drive_file
@@ -39,6 +42,13 @@ class GristImportCsvAgent(SpecialistAgent):
                     "UUID, according to source_type."
                 ),
             },
+            "artifact": {
+                **Artifact.model_json_schema(),
+                "description": (
+                    "Optional CSV file artifact returned by another block. Use this "
+                    "instead of source_type and source when available."
+                ),
+            },
             "document_name": {
                 "type": "string",
                 "description": "Name for the new Grist document.",
@@ -51,7 +61,11 @@ class GristImportCsvAgent(SpecialistAgent):
                 ),
             },
         },
-        "required": ["source_type", "source", "document_name"],
+        "required": ["document_name"],
+        "anyOf": [
+            {"required": ["source_type", "source"]},
+            {"required": ["artifact"]},
+        ],
         "additionalProperties": False,
     }
 
@@ -100,20 +114,45 @@ class GristImportCsvAgent(SpecialistAgent):
             )
         raise GristAPIError("source_type must be content, local, or drive")
 
+    def _load_artifact(self, value: Any) -> tuple[bytes, str]:
+        try:
+            artifact = Artifact.model_validate(value)
+        except ValidationError as exc:
+            raise GristAPIError("artifact is invalid") from exc
+        if artifact.kind != "file":
+            raise GristAPIError("Grist import requires a file artifact")
+        if artifact.media_type not in {
+            "text/csv",
+            "application/csv",
+            "application/vnd.ms-excel",
+        } and not (artifact.name or "").lower().endswith(".csv"):
+            raise GristAPIError("The selected artifact is not CSV data")
+        if artifact.location == "local":
+            return self._load_source("local", artifact.reference), "local"
+        if artifact.location == "drive":
+            return self._load_source("drive", artifact.reference), "drive"
+        raise GristAPIError("CSV artifacts must come from local files or Drive")
+
     def execute(
         self, arguments: dict[str, Any], context: DelegationContext
     ) -> dict[str, Any]:
         del context
-        for key in ("source_type", "source", "document_name"):
-            if not isinstance(arguments.get(key), str):
-                raise GristAPIError(f"{key} must be a string")
+        if not isinstance(arguments.get("document_name"), str):
+            raise GristAPIError("document_name must be a string")
         workspace_id = arguments.get("workspace_id", self.workspace_id)
         if not isinstance(workspace_id, int) or isinstance(workspace_id, bool):
             raise GristAPIError(
                 "Choose a Grist workspace before importing this CSV."
             )
 
-        data = self._load_source(arguments["source_type"], arguments["source"])
+        if arguments.get("artifact") is not None:
+            data, source_type = self._load_artifact(arguments["artifact"])
+        else:
+            for key in ("source_type", "source"):
+                if not isinstance(arguments.get(key), str):
+                    raise GristAPIError(f"{key} must be a string")
+            source_type = arguments["source_type"]
+            data = self._load_source(source_type, arguments["source"])
         if len(data) > self.max_import_bytes:
             raise GristAPIError(
                 f"CSV exceeds the configured {self.max_import_bytes}-byte import limit"
@@ -147,7 +186,7 @@ class GristImportCsvAgent(SpecialistAgent):
         )
         result.update(
             {
-                "source_type": arguments["source_type"],
+                "source_type": source_type,
                 "data_rows": max(0, len(rows) - 1),
                 "columns": len(rows[0]),
             }

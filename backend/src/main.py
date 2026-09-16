@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from agent.errors import AgentError
 from agent.events import AgentEvent
-from agent.orchestrator import draft_workflow_from_messages, run_stream
+from agent.runtime import draft_workflow_from_messages, run_stream
 from config import settings
 from db import get_db, init_db
 from repositories import workflow_repository

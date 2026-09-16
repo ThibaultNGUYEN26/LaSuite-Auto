@@ -28,6 +28,10 @@ class LocalFileCreationTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "Résumé de la réunion")
             self.assertEqual(result["relative_path"], "Documents/meeting-notes.md")
             self.assertEqual(result["extension"], ".md")
+            self.assertEqual(result["artifact"]["location"], "local")
+            self.assertEqual(
+                result["artifact"]["reference"], "Documents/meeting-notes.md"
+            )
 
     def test_never_overwrites_existing_file(self):
         with tempfile.TemporaryDirectory() as directory:

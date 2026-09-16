@@ -73,6 +73,8 @@ class GristServiceTests(unittest.TestCase):
         self.assertIn(b"name,total\nAlice,12\n", request.data)
         self.assertEqual(result["status"], "imported")
         self.assertEqual(result["document_id"], "new-document")
+        self.assertEqual(result["artifact"]["kind"], "grist_document")
+        self.assertEqual(result["artifact"]["reference"], "new-document")
         self.assertEqual(
             result["document_url"],
             "http://grist:8484/o/docs/doc/new-document",
@@ -132,6 +134,35 @@ class GristImportCsvAgentTests(unittest.TestCase):
                 {
                     "source_type": "local",
                     "source": "people.csv",
+                    "document_name": "People",
+                },
+                DelegationContext(conversation=()),
+            )
+
+        self.assertEqual(result["source_type"], "local")
+        self.assertEqual(
+            import_document.call_args.kwargs["csv_data"],
+            b"name,city\nAlice,Paris\n",
+        )
+
+    @patch("agent.specialists.grist.import_csv.import_csv_document")
+    def test_consumes_a_typed_local_csv_artifact(self, import_document):
+        import_document.return_value = {"status": "imported", "document_id": "doc-3"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "people.csv").write_bytes(b"name,city\nAlice,Paris\n")
+            agent = self._agent(root)
+
+            result = agent.execute(
+                {
+                    "artifact": {
+                        "kind": "file",
+                        "location": "local",
+                        "reference": "people.csv",
+                        "media_type": "text/csv",
+                        "name": "people.csv",
+                        "metadata": {},
+                    },
                     "document_name": "People",
                 },
                 DelegationContext(conversation=()),

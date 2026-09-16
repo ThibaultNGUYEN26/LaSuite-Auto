@@ -12,6 +12,13 @@ class Settings:
 
     provider: str = os.environ.get("AUTO_PROVIDER", "echo")
     cors_origins: list[str] = os.environ.get("AUTO_CORS_ORIGINS", "*").split(",")
+    block_allowed_permissions: tuple[str, ...] = tuple(
+        permission.strip()
+        for permission in os.environ.get(
+            "AUTO_ALLOWED_BLOCK_PERMISSIONS", "*"
+        ).split(",")
+        if permission.strip()
+    )
     albert_api_key: str | None = os.environ.get("ALBERT_API_KEY")
     albert_base_url: str = os.environ.get(
         "ALBERT_BASE_URL", "https://albert.api.etalab.gouv.fr/v1"

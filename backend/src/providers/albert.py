@@ -131,6 +131,7 @@ class AlbertClient:
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream one chat completion, yielding content deltas as they arrive.
 
@@ -149,7 +150,7 @@ class AlbertClient:
             "model": model,
             "messages": messages,
             "tools": tools,
-            "tool_choice": "auto",
+            "tool_choice": tool_choice,
             "temperature": 0.2,
             "stream": True,
         }

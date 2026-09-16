@@ -73,6 +73,8 @@ class DriveFileCreationTests(unittest.TestCase):
         self.assertTrue(finalize_request.full_url.endswith(f"/{ITEM_ID}/upload-ended/"))
         self.assertEqual(result["status"], "created")
         self.assertEqual(result["bytes_written"], 5)
+        self.assertEqual(result["artifact"]["location"], "drive")
+        self.assertEqual(result["artifact"]["reference"], ITEM_ID)
 
     @patch("agent.specialists.drive.create_file.create_drive_file")
     def test_agent_builds_filename_and_utf8_content(self, create_file):

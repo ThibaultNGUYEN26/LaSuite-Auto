@@ -52,20 +52,23 @@ backend/src/
     └── memory.py        # Conversation history, context management
 ```
 
-## Specialist-agent routing
+## Capability-block routing
 
-The orchestrator is now independent from specialist implementations:
+The orchestrator is independent from every integration implementation:
 
-- `agent/base.py` defines the contract shared with every agent.
-- `agent/registry.py` advertises available agents and dispatches model calls.
-- `agent/drive.py` implements Drive configuration and authenticated recursive
-  item listing.
-- `providers/albert.py` contains only the Albert API client.
-- `agent/orchestrator.py` coordinates the model/agent loop and registers the
-  specialists available at runtime.
+- `agent/orchestrator.py` contains only reasoning, chaining, delegation, and
+  result synthesis.
+- `agent/blocks.py` discovers built-in `agent/specialists/*/block.py` factories
+  and third-party packages installed through the
+  `lasuite_automations.blocks` entry-point group.
+- `agent/runtime.py` combines the selected model provider with the discovered
+  registry.
+- `agent/base.py` and `agent/registry.py` define and dispatch individual
+  capabilities.
 
-See `src/agent/README.md` for the Python-agent integration contract and safety
-requirements.
+Adding Drive, Docs, or any other block never requires an edit to the
+orchestrator. See `src/agent/README.md` for the open block contract, packaging
+example, and safety requirements.
 
 ## Run the first agent
 

@@ -6,6 +6,9 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from agent.artifacts import Artifact
 from agent.base import DelegationContext, SpecialistAgent
 from agent.errors import DriveAPIError
 from services.drive import create_drive_file, resolve_drive_upload_acl
@@ -44,6 +47,13 @@ class DriveUploadFileAgent(SpecialistAgent):
                     "Downloads/report.pdf."
                 ),
             },
+            "artifact": {
+                **Artifact.model_json_schema(),
+                "description": (
+                    "Optional typed local file artifact returned by another block. "
+                    "Use this instead of relative_path when available."
+                ),
+            },
             "parent_id": {
                 "type": "string",
                 "description": (
@@ -58,7 +68,10 @@ class DriveUploadFileAgent(SpecialistAgent):
                 ),
             },
         },
-        "required": ["relative_path"],
+        "anyOf": [
+            {"required": ["relative_path"]},
+            {"required": ["artifact"]},
+        ],
         "additionalProperties": False,
     }
 
@@ -83,9 +96,19 @@ class DriveUploadFileAgent(SpecialistAgent):
         self, arguments: dict[str, Any], context: DelegationContext
     ) -> dict[str, Any]:
         del context
-        relative_path = arguments.get("relative_path")
-        if not isinstance(relative_path, str):
-            raise DriveAPIError("relative_path must be a string")
+        artifact_value = arguments.get("artifact")
+        if artifact_value is not None:
+            try:
+                artifact = Artifact.model_validate(artifact_value)
+            except ValidationError as exc:
+                raise DriveAPIError("artifact is invalid") from exc
+            if artifact.kind != "file" or artifact.location != "local":
+                raise DriveAPIError("Drive upload requires a local file artifact")
+            relative_path = artifact.reference
+        else:
+            relative_path = arguments.get("relative_path")
+            if not isinstance(relative_path, str):
+                raise DriveAPIError("Provide relative_path or a local file artifact")
         parent_id = arguments.get("parent_id")
         if parent_id is not None and not isinstance(parent_id, str):
             raise DriveAPIError("parent_id must be a string")

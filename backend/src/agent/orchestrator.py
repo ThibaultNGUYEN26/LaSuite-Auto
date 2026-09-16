@@ -1,4 +1,4 @@
-"""Coordinator that routes model tool calls to registered specialist agents."""
+"""Domain-agnostic reasoning loop for registered capability blocks."""
 
 from __future__ import annotations
 
@@ -7,61 +7,37 @@ from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from agent.base import DelegationContext
-from agent.specialists.code import RunPythonAgent
-from agent.specialists.drive import (
-    DriveConfigAgent,
-    DriveCreateFileAgent,
-    DriveListItemsAgent,
-    DriveReadImageAgent,
-    DriveReadPdfAgent,
-    DriveUploadFileAgent,
-)
-from agent.specialists.local_files import (
-    LocalFilesCreateFileAgent,
-    LocalFilesListItemsAgent,
-    LocalFilesReadImageAgent,
-    LocalFilesReadPdfAgent,
-)
-from agent.specialists.grist import GristImportCsvAgent, GristListWorkspacesAgent
-from agent.errors import AgentError, AlbertAPIError, DriveAPIError
+from agent.blocks import BlockRegistry
+from agent.errors import AgentError
 from agent.events import AgentEvent
 from agent.registry import AgentRegistry
+from agent.selection import select_blocks
 from agent.workflow_synthesizer import evaluate_workflow_suggestion
-from config import settings
-from providers.albert import AlbertClient
-from providers.echo import EchoProvider
-from schemas import ChatMessage, WorkflowDraft
-from services.drive import get_drive_config
-from services.image import AlbertImageAnalyzer
+from schemas import ChatMessage
 
 
 SYSTEM_PROMPT = (
-    "You are the coordinator for La Suite Automations. Route tasks to the most "
-    "appropriate registered specialist agent whenever current data or an action "
-    "is required. You may call multiple agents in sequence. Do not claim an action "
-    "succeeded unless its agent result confirms it. Distinguish La Suite Drive "
-    "from local files on the computer and use only the matching specialist. If no "
-    "available agent can do the work, explain that limitation instead of guessing. "
-    "When a specialist returns complete=false or a limitation, clearly tell the user "
-    "which folders or items could not be checked and do not present partial counts as "
-    "complete totals. When folders remain unchecked, ask whether the user wants to "
-    "focus on a specific folder or see everything found so far. Keep this explanation "
-    "non-technical: never mention depth limits, tool calls, steps, or the backend. "
-    "Create or upload a local or Drive file only when the user explicitly requests "
-    "that action. Use drive_create_file for generated text and drive_upload_file for "
-    "an existing local file whose original bytes must be preserved. "
-    "Import CSV data into Grist only when the user explicitly requests it. If a CSV "
-    "was just created, pass its returned local path or Drive item ID to the Grist "
-    "specialist instead of asking the user to repeat the data. "
-    "Never imply that an existing file was overwritten or uploaded unless the "
-    "specialist confirms success."
+    "You are the reasoning and coordination brain for La Suite Automations. The "
+    "registered capabilities are the only actions and live data sources available "
+    "to you. Select capabilities from their descriptions and schemas; never assume "
+    "a capability exists because of prior knowledge. You may chain multiple "
+    "capabilities when one result supplies the input to another. Reuse structured "
+    "identifiers and paths returned by earlier calls instead of inventing them or "
+    "asking the user to repeat known information. Call a capability that changes "
+    "external state only when the user clearly requested that change. Never claim "
+    "an action succeeded unless its result confirms success. If a result is partial "
+    "or contains a limitation, state that clearly and do not present it as complete. "
+    "If no registered capability can complete the request, explain the limitation "
+    "and ask only for information that could make progress. Speak in user language: "
+    "do not mention internal capability names, tool calls, execution steps, internal "
+    "limits, or the backend."
 )
 
 STEP_LIMIT_PROMPT = (
-    "Do not call another tool. Use only the results already available. If the search "
-    "is incomplete, simply say that some folders remain unchecked, then ask whether "
-    "the user wants you to focus on a specific folder or show everything found so far. "
-    "Do not mention tools, steps, limits, depth numbers, the backend, or errors."
+    "Do not call another capability. Use only the results already available. Give the "
+    "user the useful result gathered so far, clearly say what remains incomplete, and "
+    "ask one focused question that would let the work continue. Do not mention tools, "
+    "steps, internal limits, the backend, or implementation errors."
 )
 
 
@@ -76,7 +52,7 @@ class ChatCompletionClient(Protocol):
 
 
 class OrchestratorAgent:
-    """Run the coordinator loop and dispatch calls through an agent registry."""
+    """Reason over advertised capabilities and coordinate their execution."""
 
     def __init__(
         self,
@@ -84,25 +60,39 @@ class OrchestratorAgent:
         *,
         model: str,
         registry: AgentRegistry | None = None,
-        drive_base_url: str | None = None,
+        block_registry: BlockRegistry | None = None,
         max_steps: int = 5,
     ) -> None:
-        # ``drive_base_url`` keeps the original constructor compatible while
-        # callers migrate to explicit registry composition.
-        if registry is None:
-            if drive_base_url is None:
-                raise ValueError("Provide an agent registry or drive_base_url")
-            registry = AgentRegistry([DriveConfigAgent(drive_base_url)])
+        if registry is not None and block_registry is not None:
+            raise ValueError("Provide either registry or block_registry, not both")
         self.albert = albert
         self.model = model
-        self.registry = registry
+        self.registry = registry if registry is not None else AgentRegistry()
+        self.block_registry = block_registry
         self.max_steps = max_steps
 
     async def run_stream(
         self, conversation: list[ChatMessage]
     ) -> AsyncIterator[AgentEvent]:
+        active_registry = self.registry
+        planning_prompt = SYSTEM_PROMPT
+        if self.block_registry is not None:
+            selected_blocks = await select_blocks(
+                self.albert,
+                model=self.model,
+                conversation=conversation,
+                blocks=self.block_registry,
+            )
+            active_registry = self.block_registry.agent_registry(selected_blocks)
+            planning_prompt += (
+                "\n\nSelected capability manifests and known workflow routes:\n"
+                + json.dumps(
+                    self.block_registry.catalog(selected_blocks),
+                    ensure_ascii=False,
+                )
+            )
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": planning_prompt},
             *(message.model_dump() for message in conversation),
         ]
         context = DelegationContext(conversation=tuple(conversation))
@@ -116,7 +106,7 @@ class OrchestratorAgent:
             async for chunk in self.albert.chat_completion_stream(
                 model=self.model,
                 messages=messages,
-                tools=self.registry.tool_definitions(),
+                tools=active_registry.tool_definitions(),
             ):
                 if chunk["type"] == "content":
                     content_parts.append(chunk["delta"])
@@ -164,7 +154,7 @@ class OrchestratorAgent:
                         "arguments": arguments,
                     },
                 )
-                result = self.registry.dispatch(name, arguments, context)
+                result = active_registry.dispatch(name, arguments, context)
                 yield AgentEvent(
                     "tool_call_result",
                     {
@@ -182,10 +172,6 @@ class OrchestratorAgent:
                     }
                 )
 
-        # Tool recursion is bounded, but reaching that bound is a partial-result
-        # condition rather than a server failure. Give the model one tool-free
-        # synthesis call so the user receives the data gathered so far plus a
-        # clear limitation instead of an error.
         synthesis_step = self.max_steps + 1
         yield AgentEvent(
             "step_start", {"step": synthesis_step, "max_steps": self.max_steps}
@@ -204,8 +190,8 @@ class OrchestratorAgent:
                 )
 
         content = "".join(content_parts).strip() or (
-            "Some folders remain unchecked. Would you like me to focus on a specific "
-            "folder, or show everything I found so far?"
+            "I could only complete part of that request. Which part would you like "
+            "me to focus on next?"
         )
         yield AgentEvent(
             "step_complete",
@@ -221,14 +207,7 @@ class OrchestratorAgent:
         final_content: str,
         used_specialist: bool,
     ) -> AsyncIterator[AgentEvent]:
-        """Best-effort: propose saving this turn as a workflow.
-
-        Only turns that delegated to a specialist are even worth asking the
-        model about (a cheap pre-filter); the model then makes the actual
-        judgement call on whether the task is concrete and repeatable enough
-        to suggest. A drafting failure never disrupts the chat turn that
-        already completed.
-        """
+        """Best-effort: propose saving repeatable completed work as a workflow."""
         if not used_specialist:
             return
         try:
@@ -241,151 +220,8 @@ class OrchestratorAgent:
             )
         except Exception:
             return
-        if not suggestion.applicable:
-            return
-        yield AgentEvent("workflow_suggested", suggestion.draft.model_dump())
+        if suggestion.applicable:
+            yield AgentEvent("workflow_suggested", suggestion.draft.model_dump())
 
 
-_echo_provider = EchoProvider()
-_albert_agent: OrchestratorAgent | None = None
-
-
-def build_agent_registry() -> AgentRegistry:
-    """Composition root: register every specialist available to the coordinator."""
-    image_analyzer = AlbertImageAnalyzer(
-        settings.albert_api_key,
-        base_url=settings.albert_base_url,
-        requested_model=settings.albert_vision_model,
-    )
-    return AgentRegistry(
-        [
-            DriveConfigAgent(settings.drive_base_url),
-            DriveCreateFileAgent(
-                settings.drive_base_url,
-                settings.drive_session_id,
-                csrf_token=settings.drive_csrf_token,
-                upload_acl=settings.drive_upload_acl,
-                max_create_bytes=settings.drive_max_create_bytes,
-            ),
-            DriveListItemsAgent(
-                settings.drive_base_url,
-                settings.drive_session_id,
-            ),
-            DriveReadPdfAgent(
-                settings.drive_base_url,
-                settings.drive_session_id,
-                max_download_bytes=settings.drive_max_download_bytes,
-                max_text_characters=settings.pdf_max_text_characters,
-            ),
-            DriveReadImageAgent(
-                settings.drive_base_url,
-                settings.drive_session_id,
-                image_analyzer,
-                max_download_bytes=settings.image_max_read_bytes,
-            ),
-            DriveUploadFileAgent(
-                settings.drive_base_url,
-                settings.drive_session_id,
-                settings.local_files_root,
-                csrf_token=settings.drive_csrf_token,
-                upload_acl=settings.drive_upload_acl,
-                max_upload_bytes=settings.drive_max_upload_bytes,
-            ),
-            GristListWorkspacesAgent(
-                settings.grist_base_url,
-                settings.grist_api_key,
-                org_id=settings.grist_org_id,
-            ),
-            GristImportCsvAgent(
-                settings.grist_base_url,
-                settings.grist_api_key,
-                org_id=settings.grist_org_id,
-                workspace_id=settings.grist_workspace_id,
-                local_files_root=settings.local_files_root,
-                drive_base_url=settings.drive_base_url,
-                drive_session_id=settings.drive_session_id,
-                max_import_bytes=settings.grist_max_import_bytes,
-            ),
-            LocalFilesListItemsAgent(settings.local_files_root),
-            LocalFilesCreateFileAgent(
-                settings.local_files_root,
-                max_create_bytes=settings.local_files_max_create_bytes,
-            ),
-            LocalFilesReadPdfAgent(
-                settings.local_files_root,
-                max_read_bytes=settings.local_files_max_read_bytes,
-                max_text_characters=settings.pdf_max_text_characters,
-            ),
-            LocalFilesReadImageAgent(
-                settings.local_files_root,
-                image_analyzer,
-                max_read_bytes=settings.image_max_read_bytes,
-            ),
-            RunPythonAgent(),
-        ]
-    )
-
-
-def _get_albert_agent() -> OrchestratorAgent:
-    global _albert_agent
-    if _albert_agent is not None:
-        return _albert_agent
-    if not settings.albert_api_key:
-        raise AgentError("Set ALBERT_API_KEY before using the Albert provider")
-
-    albert = AlbertClient(
-        settings.albert_api_key,
-        base_url=settings.albert_base_url,
-    )
-    model = albert.resolve_model(settings.albert_model)
-    _albert_agent = OrchestratorAgent(
-        albert,
-        model=model,
-        registry=build_agent_registry(),
-    )
-    return _albert_agent
-
-
-async def run_stream(messages: list[ChatMessage]) -> AsyncIterator[AgentEvent]:
-    if settings.provider == "echo":
-        yield AgentEvent("final", {"content": _echo_provider.generate(messages)})
-        return
-    if settings.provider == "albert":
-        async for event in _get_albert_agent().run_stream(messages):
-            yield event
-        return
-    raise AgentError(f"Unknown AUTO_PROVIDER: {settings.provider}")
-
-
-async def draft_workflow_from_messages(messages: list[ChatMessage]) -> WorkflowDraft:
-    """Generalize a conversation into a Workflow draft, for the manual save path.
-
-    The user explicitly asked to save this, so the applicability judgement
-    that gates the proactive suggestion doesn't apply here — always return
-    the model's best-effort draft.
-    """
-    if settings.provider == "albert" and settings.albert_api_key:
-        agent = _get_albert_agent()
-        suggestion = await evaluate_workflow_suggestion(
-            messages, albert=agent.albert, model=agent.model
-        )
-    else:
-        suggestion = await evaluate_workflow_suggestion(
-            messages, albert=None, model=None
-        )
-    return suggestion.draft
-
-
-# Preserve imports used by existing callers while implementation lives in
-# focused modules.
-__all__ = [
-    "AgentError",
-    "AlbertAPIError",
-    "AlbertClient",
-    "DriveAPIError",
-    "OrchestratorAgent",
-    "build_agent_registry",
-    "draft_workflow_from_messages",
-    "get_drive_config",
-    "run_stream",
-]
+__all__ = ["OrchestratorAgent"]

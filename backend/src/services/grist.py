@@ -9,6 +9,7 @@ from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from agent.artifacts import Artifact
 from agent.errors import GristAPIError
 
 
@@ -176,6 +177,14 @@ def import_csv_document(
             f"{base_url.rstrip('/')}/o/{quote(org_id.strip(), safe='')}/doc/"
             f"{quote(document_id, safe='')}"
         )
+    artifact = Artifact(
+        kind="grist_document",
+        location="remote",
+        reference=document_id,
+        media_type="application/vnd.grist.document",
+        name=clean_name,
+        metadata={"workspace_id": workspace_id, "url": document_url},
+    )
     return {
         "status": "imported",
         "document_id": document_id,
@@ -183,4 +192,5 @@ def import_csv_document(
         "workspace_id": workspace_id,
         "bytes_uploaded": len(csv_data),
         "document_url": document_url,
+        "artifact": artifact.tool_value(),
     }

@@ -1,22 +1,34 @@
-# Specialist agent integration
+# Capability blocks
 
-The orchestrator is a coordinator. It does not implement Drive, filesystem, or
-Python execution itself. Instead, it advertises registered specialist agents to
-the model as tools and dispatches the selected call through `AgentRegistry`.
+The orchestrator is a domain-agnostic reasoning loop. It knows how to select,
+chain, and evaluate capabilities, but it does not import or name Drive, local
+files, Grist, Python, or any future integration. `agent.runtime` discovers
+blocks, flattens their specialist agents into `AgentRegistry`, and gives that
+registry to the orchestrator.
+
+The runtime performs two-stage routing: the first model call receives only
+compact block manifests, then the planning loop receives detailed schemas only
+for the selected blocks. Typed `Artifact` references connect outputs from one
+block to inputs of another. See `backend/BLOCKS.md` for the complete contributor
+contract.
 
 Specialists are grouped by domain instead of being placed beside the
 orchestrator:
 
 ```text
 agent/
+  blocks.py
   orchestrator.py
+  runtime.py
   specialists/
     drive/
+      block.py
       config.py
       list_items.py
       read_image.py
       read_pdf.py
     local_files/
+      block.py
       create_file.py
       list_items.py
       read_image.py
@@ -28,9 +40,9 @@ services/
   pdf.py
 ```
 
-An agent owns one model-facing capability and its input validation. A service
-owns reusable API details. `DriveReadPdfAgent` adapts the `tools/readFile.py`
-behavior to the PDF bytes returned by the authenticated Drive downloader.
+A block owns an integration boundary and constructs one or more model-facing
+agents. An agent owns one capability and its input validation. A service owns
+reusable API details. The brain only receives the resulting JSON schemas.
 
 ## Reading a Drive PDF
 
@@ -108,9 +120,11 @@ after an explicit user request; existing Grist documents are not replaced.
 4. The structured result is returned to Albert, which may delegate another step
    or produce the final response.
 
-## Adding the Python execution agent
+## Adding a built-in block
 
-Implement `SpecialistAgent` in a separate module:
+Create a package below `agent/specialists`, implement one or more
+`SpecialistAgent` classes, then expose a `block.py`. Discovery is automatic;
+there is no central list and `orchestrator.py` must not be modified.
 
 ```python
 from typing import Any
@@ -118,38 +132,56 @@ from typing import Any
 from agent.base import DelegationContext, SpecialistAgent
 
 
-class PythonExecutionAgent(SpecialistAgent):
-    name = "python_execute"
-    description = (
-        "Execute an approved Python-based operation on local files, such as "
-        "classifying or organizing files in the user's Downloads folder."
-    )
+class DocsSearchAgent(SpecialistAgent):
+    name = "docs_search"
+    description = "Search documents available in the configured Docs service."
     parameters = {
         "type": "object",
         "properties": {
-            "task": {"type": "string"},
-            "working_directory": {"type": "string"},
+            "query": {"type": "string"},
         },
-        "required": ["task", "working_directory"],
+        "required": ["query"],
         "additionalProperties": False,
     }
 
     def execute(
         self, arguments: dict[str, Any], context: DelegationContext
     ) -> dict[str, Any]:
-        # Delegate to the sandboxed Python runner here.
-        return {
-            "status": "completed",
-            "summary": "...",
-            "files_changed": [],
-        }
+        return {"results": []}
 ```
 
-Register it in `build_agent_registry()` in `orchestrator.py`. Once registered,
-its definition is automatically sent to Albert; no routing `if` statement is
-needed in the orchestration loop.
+```python
+# agent/specialists/docs/block.py
+from agent.blocks import AgentBlock
+from agent.specialists.docs.search import DocsSearchAgent
 
-The Python agent should resolve and enforce an allowed workspace itself. It
-must not trust a model-provided path, and destructive operations should require
-an explicit approval flow. Return structured results and errors rather than a
-prewritten assistant response so the coordinator can combine several agents.
+
+def create_block() -> AgentBlock:
+    return AgentBlock(
+        name="docs",
+        description="Search and manage collaborative documents.",
+        agents=(DocsSearchAgent(),),
+    )
+```
+
+At the next backend start, `agent.blocks.discover_builtin_blocks()` finds the
+package and advertises its agents to the brain.
+
+## Publishing an external block
+
+An independently maintained Python package can expose the same zero-argument
+factory through the `lasuite_automations.blocks` entry-point group:
+
+```toml
+[project.entry-points."lasuite_automations.blocks"]
+docs = "my_lasuite_docs.block:create_block"
+```
+
+Installing that package into the backend environment is enough. The core
+repository, runtime, and orchestrator require no changes. Block names and agent
+names must be globally unique; startup fails clearly when a collision exists.
+
+Each block must enforce its own authentication, path boundaries, permissions,
+and mutation safeguards. It must not trust model-provided identifiers blindly.
+Return structured results and errors rather than a prewritten assistant response
+so the brain can combine several blocks in one request.
