@@ -14,8 +14,9 @@ class LocalFilesListItemsAgent(SpecialistAgent):
         "List files and folders on this computer under the configured local-files "
         "workspace (normally the user's home folder), including subfolders by "
         "default. The directory parameter can select Downloads, Documents, Desktop, "
-        "or another relative subfolder. Use this for requests about local files or "
-        "the computer. Do not use it for La Suite Drive."
+        "or a folder path returned by folder creation. Use this to search or inspect "
+        "the contents of a specific local folder. Use this for requests about local "
+        "files or the computer. Do not use it for La Suite Drive."
     )
     parameters: dict[str, Any] = {
         "type": "object",

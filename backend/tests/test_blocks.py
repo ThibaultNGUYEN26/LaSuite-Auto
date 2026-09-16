@@ -69,6 +69,17 @@ class BlockDiscoveryTests(unittest.TestCase):
             ("data_analyze_table", "pdf_render_analysis"),
             {workflow.capabilities for workflow in analyst.workflows},
         )
+        local_files = next(block for block in blocks if block.name == "local_files")
+        pdf_preparation = next(
+            capability
+            for capability in local_files.capability_catalog()
+            if capability.name == "local_files_summarize_pdf"
+        )
+        self.assertTrue(pdf_preparation.internal)
+        self.assertIn(
+            "local_files.analyze_pdf",
+            {workflow.name for workflow in local_files.workflows},
+        )
 
     def test_registry_accepts_a_new_block_without_orchestrator_changes(self):
         block = AgentBlock(name="example", agents=(ExampleAgent(),))

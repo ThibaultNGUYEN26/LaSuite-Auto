@@ -1,6 +1,10 @@
 """Local-files specialist agents."""
 
+from agent.specialists.local_files.analyze_folder import LocalFilesAnalyzeFolderAgent
+from agent.specialists.local_files.audit_folder import LocalFilesAuditFolderAgent
+from agent.specialists.local_files.audit_pdf import LocalFilesAuditPdfAgent
 from agent.specialists.local_files.create_file import LocalFilesCreateFileAgent
+from agent.specialists.local_files.create_folder import LocalFilesCreateFolderAgent
 from agent.specialists.local_files.compare_pdfs import LocalFilesComparePdfsAgent
 from agent.specialists.local_files.list_items import LocalFilesListItemsAgent
 from agent.specialists.local_files.read_image import LocalFilesReadImageAgent
@@ -15,7 +19,11 @@ from agent.specialists.local_files.summarize_pdf import LocalFilesSummarizePdfAg
 from agent.specialists.local_files.summarize_pdfs import LocalFilesSummarizePdfsAgent
 
 __all__ = [
+    "LocalFilesAnalyzeFolderAgent",
+    "LocalFilesAuditFolderAgent",
+    "LocalFilesAuditPdfAgent",
     "LocalFilesCreateFileAgent",
+    "LocalFilesCreateFolderAgent",
     "LocalFilesComparePdfsAgent",
     "LocalFilesListItemsAgent",
     "LocalFilesReadImageAgent",

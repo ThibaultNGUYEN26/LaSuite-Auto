@@ -71,6 +71,12 @@ def create_block() -> AgentBlock:
 Capability names must exactly match the names of the supplied agents. Block and
 agent names are globally unique.
 
+Set `internal=True` on a `CapabilityManifest` when the capability maintains an
+index, cache, memory, or another implementation artifact needed by a user-facing
+outcome. The orchestrator can call internal preparation automatically and should
+not ask the user to request—or normally expose—the intermediate artifact. Return
+the useful conversational result as well as maintaining the private state.
+
 ## Typed artifacts
 
 Tools should return an `artifact` whenever they create or locate reusable data:

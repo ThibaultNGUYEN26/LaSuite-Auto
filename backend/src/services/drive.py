@@ -75,6 +75,26 @@ def get_drive_config(base_url: str, *, timeout: float = 10.0) -> dict[str, Any]:
     return _read_json(request, service="Drive", timeout=timeout)
 
 
+def get_drive_item(
+    base_url: str,
+    session_id: str,
+    item_id: str,
+    *,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Read metadata for one authenticated Drive item."""
+    _validate_uuid(item_id, field="item_id")
+    endpoint = urljoin(
+        f"{base_url.rstrip('/')}/", f"api/v1.0/items/{item_id}/"
+    )
+    request = Request(
+        endpoint,
+        headers={"Accept": "application/json", "Cookie": _session_cookie(session_id)},
+        method="GET",
+    )
+    return _read_json(request, service="Drive", timeout=timeout)
+
+
 def resolve_drive_upload_acl(
     base_url: str,
     configured_acl: str | None,
@@ -159,20 +179,29 @@ def list_drive_items(
                 compact_item = {field: item.get(field) for field in fields}
                 compact_item.update({"parent_id": parent_id, "depth": depth, "path": item_path})
                 item_id = item.get("id")
-                if item.get("type") != "folder" and isinstance(item_id, str):
+                if isinstance(item_id, str):
+                    is_folder = item.get("type") == "folder"
                     compact_item["artifact"] = Artifact(
-                        kind="file",
+                        kind="folder" if is_folder else "file",
                         location="drive",
                         reference=item_id,
                         media_type=(
-                            item.get("mimetype")
-                            if isinstance(item.get("mimetype"), str)
-                            else "application/octet-stream"
+                            "inode/directory"
+                            if is_folder
+                            else (
+                                item.get("mimetype")
+                                if isinstance(item.get("mimetype"), str)
+                                else "application/octet-stream"
+                            )
                         ),
                         name=(
-                            item.get("filename")
-                            if isinstance(item.get("filename"), str)
-                            else str(name)
+                            str(name)
+                            if is_folder
+                            else (
+                                item.get("filename")
+                                if isinstance(item.get("filename"), str)
+                                else str(name)
+                            )
                         ),
                     ).tool_value()
                 items.append(compact_item)
@@ -308,6 +337,49 @@ def download_drive_file(
             except ValueError:
                 pass
         data = _read_limited(response, max_bytes)
+    return data
+
+
+def download_drive_folder_archive(
+    base_url: str,
+    session_id: str,
+    folder_id: str,
+    *,
+    max_bytes: int = 200 * 1024 * 1024,
+    timeout: float = 120.0,
+) -> bytes:
+    """Stream Drive's native recursive ZIP export for one folder."""
+    cookie = _session_cookie(session_id)
+    _validate_uuid(folder_id, field="folder_id")
+    endpoint = urljoin(
+        f"{base_url.rstrip('/')}/", f"api/v1.0/items/{folder_id}/export/"
+    )
+    request = Request(
+        endpoint,
+        headers={"Accept": "application/json", "Cookie": cookie},
+        method="GET",
+    )
+    try:
+        response = urlopen(request, timeout=timeout)
+    except HTTPError as exc:
+        raise DriveAPIError(
+            f"Drive returned HTTP {exc.code} for GET {endpoint}"
+        ) from exc
+    except URLError as exc:
+        raise DriveAPIError(f"Could not reach {endpoint}: {exc.reason}") from exc
+    with response:
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    raise DriveAPIError(
+                        "Drive folder archive exceeds the configured download limit"
+                    )
+            except ValueError:
+                pass
+        data = _read_limited(response, max_bytes)
+    if not data.startswith(b"PK"):
+        raise DriveAPIError("Drive did not return a valid ZIP folder archive")
     return data
 
 

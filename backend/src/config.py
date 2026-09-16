@@ -7,10 +7,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
 class Settings:
     """Which provider/model is active, loaded from environment/settings."""
 
     provider: str = os.environ.get("AUTO_PROVIDER", "echo")
+    orchestrator_max_steps: int = _bounded_int(
+        "ORCHESTRATOR_MAX_STEPS", 20, minimum=1, maximum=20
+    )
     cors_origins: list[str] = os.environ.get("AUTO_CORS_ORIGINS", "*").split(",")
     block_allowed_permissions: tuple[str, ...] = tuple(
         permission.strip()
@@ -37,6 +51,14 @@ class Settings:
     )
     drive_max_download_bytes: int = int(
         os.environ.get("DRIVE_MAX_DOWNLOAD_BYTES", str(20 * 1024 * 1024))
+    )
+    drive_max_folder_download_files: int = int(
+        os.environ.get("DRIVE_MAX_FOLDER_DOWNLOAD_FILES", "100")
+    )
+    drive_max_folder_download_bytes: int = int(
+        os.environ.get(
+            "DRIVE_MAX_FOLDER_DOWNLOAD_BYTES", str(200 * 1024 * 1024)
+        )
     )
     drive_max_upload_bytes: int = int(
         os.environ.get("DRIVE_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))

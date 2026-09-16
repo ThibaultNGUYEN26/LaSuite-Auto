@@ -91,11 +91,16 @@ class PdfMemoryTests(unittest.IsolatedAsyncioTestCase):
                 DelegationContext(conversation=()),
             )
 
-            target = root / result["relative_path"]
+            target = next((root / "memory").glob("*.md"))
             content = target.read_text(encoding="utf-8")
+            self.assertEqual(result["status"], "analyzed")
             self.assertEqual(result["pages_analyzed"], 2)
             self.assertTrue(result["complete"])
+            self.assertTrue(result["ready_for_follow_up"])
             self.assertEqual(result["title"], "MX Linux User Guide")
+            self.assertNotIn("relative_path", result)
+            self.assertNotIn("artifact", result)
+            self.assertIn("Use VLC for video", result["analysis"])
             self.assertEqual(target.name, "mx-linux-user-guide.md")
             self.assertIn(
                 "[Open the original PDF](<../Downloads/MX%20Linux%20Guide.pdf>)",
@@ -138,12 +143,8 @@ class PdfMemoryTests(unittest.IsolatedAsyncioTestCase):
                 model="text-model",
             )
 
-            first = await agent.execute(
-                {"relative_path": "guide.pdf"}, DelegationContext(conversation=())
-            )
-            second = await agent.execute(
-                {"relative_path": "guide.pdf"}, DelegationContext(conversation=())
-            )
+            first = await agent.summarize("guide.pdf")
+            second = await agent.summarize("guide.pdf")
 
             self.assertEqual(first["status"], "created")
             self.assertEqual(second["status"], "updated")
@@ -240,6 +241,41 @@ class PdfMemoryBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["created"], 2)
         self.assertTrue(result["limited"])
         self.assertEqual(len(summarizer.calls), 2)
+
+    async def test_discovers_pdfs_from_several_folders_in_one_batch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder, filename in (
+                ("Auditor", "requirements.pdf"),
+                ("Client_1", "client-one.pdf"),
+                ("Client_2", "client-two.pdf"),
+            ):
+                target = root / folder
+                target.mkdir()
+                (target / filename).write_bytes(b"%PDF-fake")
+            summarizer = FakeBatchSummarizer()
+            agent = LocalFilesSummarizePdfsAgent(
+                root,
+                summarizer,
+                max_files=10,
+                concurrency=2,
+            )
+
+            result = await agent.execute(
+                {"directories": ["Auditor", "Client_1", "Client_2"]},
+                DelegationContext(conversation=()),
+            )
+
+        self.assertEqual(result["requested"], 3)
+        self.assertEqual(result["created"], 3)
+        self.assertCountEqual(
+            summarizer.calls,
+            [
+                "Auditor/requirements.pdf",
+                "Client_1/client-one.pdf",
+                "Client_2/client-two.pdf",
+            ],
+        )
 
 
 if __name__ == "__main__":

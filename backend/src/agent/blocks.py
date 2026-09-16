@@ -61,6 +61,7 @@ class CapabilityManifest:
     accepts: tuple[ArtifactContract, ...] = ()
     produces: tuple[ArtifactContract, ...] = ()
     confirmation_required: bool = False
+    internal: bool = False
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,7 @@ class AgentBlock:
                     "side_effect": capability.side_effect,
                     "accepts": [artifact.kind for artifact in capability.accepts],
                     "produces": [artifact.kind for artifact in capability.produces],
+                    "internal": capability.internal,
                 }
                 for capability in self.capability_catalog()
             ],

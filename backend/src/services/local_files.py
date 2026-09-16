@@ -65,6 +65,60 @@ def resolve_local_directory(root: Path, relative_directory: str = ".") -> Path:
     return candidate
 
 
+def create_local_directory(
+    root: Path,
+    *,
+    parent_directory: str,
+    folder_name: str,
+) -> dict[str, Any]:
+    """Create one directory below an existing parent without overwriting anything."""
+    parent = resolve_local_directory(root, parent_directory)
+    clean_name = folder_name.strip()
+    if (
+        not clean_name
+        or clean_name in {".", ".."}
+        or Path(clean_name).name != clean_name
+        or any(character in clean_name for character in '<>:"/\\|?*')
+        or clean_name.endswith((" ", "."))
+    ):
+        raise LocalFilesError("folder_name contains invalid characters")
+    if Path(clean_name).stem.upper() in WINDOWS_RESERVED_NAMES:
+        raise LocalFilesError("folder_name is reserved by Windows")
+
+    resolved_root = _root_directory(root)
+    target = (parent / clean_name).resolve()
+    try:
+        relative_path = target.relative_to(resolved_root).as_posix()
+    except ValueError as exc:
+        raise LocalFilesError(
+            "Target directory escapes the configured local-files root"
+        ) from exc
+    try:
+        target.mkdir()
+    except FileExistsError as exc:
+        raise LocalFilesError(
+            "A file or folder with this name already exists"
+        ) from exc
+    except PermissionError as exc:
+        raise LocalFilesError("Permission denied") from exc
+    except OSError as exc:
+        raise LocalFilesError(f"Could not create folder: {exc}") from exc
+
+    artifact = Artifact(
+        kind="folder",
+        location="local",
+        reference=relative_path,
+        media_type="inode/directory",
+        name=target.name,
+    )
+    return {
+        "status": "created",
+        "relative_path": relative_path,
+        "name": target.name,
+        "artifact": artifact.tool_value(),
+    }
+
+
 def list_local_items(
     root: Path,
     *,
@@ -304,7 +358,11 @@ def create_local_text_file(
         kind="file",
         location="local",
         reference=relative_path,
-        media_type=mimetypes.guess_type(target.name)[0] or "text/plain",
+        media_type=(
+            "text/csv"
+            if target.suffix.lower() == ".csv"
+            else mimetypes.guess_type(target.name)[0] or "text/plain"
+        ),
         name=target.name,
     )
     return {
