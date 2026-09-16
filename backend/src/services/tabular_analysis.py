@@ -1,9 +1,8 @@
-"""Dependency-free parsing, statistics, trends, charts, and HTML reporting."""
+"""Dependency-free parsing and comprehensive statistical analysis."""
 
 from __future__ import annotations
 
 import csv
-import html
 import io
 import math
 import statistics
@@ -26,7 +25,9 @@ DATE_FORMATS = (
 )
 
 
-def parse_csv_data(data: bytes, *, max_rows: int) -> tuple[list[str], list[list[str]], bool]:
+def parse_csv_data(
+    data: bytes, *, max_rows: int
+) -> tuple[list[str], list[list[str]], bool]:
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -34,8 +35,7 @@ def parse_csv_data(data: bytes, *, max_rows: int) -> tuple[list[str], list[list[
     if not text.strip() or "\x00" in text:
         raise DataAnalysisError("CSV data is empty or invalid")
     try:
-        sample = text[:8192]
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
     except csv.Error:
         dialect = csv.excel
     try:
@@ -53,9 +53,7 @@ def parse_csv_data(data: bytes, *, max_rows: int) -> tuple[list[str], list[list[
     return _normalize_table(headers, rows), rows, truncated
 
 
-def _normalize_table(
-    headers: list[str], rows: list[list[str]]
-) -> list[str]:
+def _normalize_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     width = max([len(headers), *(len(row) for row in rows)] or [0])
     if width == 0:
         raise DataAnalysisError("The table has no columns")
@@ -72,7 +70,9 @@ def _normalize_table(
     return normalized
 
 
-def parse_ods_data(data: bytes, *, max_rows: int) -> tuple[list[str], list[list[str]], bool]:
+def parse_ods_data(
+    data: bytes, *, max_rows: int
+) -> tuple[list[str], list[list[str]], bool]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             content = archive.read("content.xml")
@@ -95,7 +95,11 @@ def parse_ods_data(data: bytes, *, max_rows: int) -> tuple[list[str], list[list[
     truncated = False
     for row_element in table.findall("table:table-row", namespaces):
         repeat_rows = min(
-            int(row_element.get(f"{{{namespaces['table']}}}number-rows-repeated", "1")),
+            int(
+                row_element.get(
+                    f"{{{namespaces['table']}}}number-rows-repeated", "1"
+                )
+            ),
             max_rows + 1,
         )
         values: list[str] = []
@@ -106,7 +110,11 @@ def parse_ods_data(data: bytes, *, max_rows: int) -> tuple[list[str], list[list[
             }:
                 continue
             repeat_columns = min(
-                int(cell.get(f"{{{namespaces['table']}}}number-columns-repeated", "1")),
+                int(
+                    cell.get(
+                        f"{{{namespaces['table']}}}number-columns-repeated", "1"
+                    )
+                ),
                 1000,
             )
             paragraphs = [
@@ -140,10 +148,10 @@ def _number(value: str) -> float | None:
         clean = clean.replace(",", "")
     clean = clean.removesuffix("%")
     try:
-        value_number = float(clean)
+        number = float(clean)
     except ValueError:
         return None
-    return value_number if math.isfinite(value_number) else None
+    return number if math.isfinite(number) else None
 
 
 def _date(value: str) -> datetime | None:
@@ -162,27 +170,43 @@ def _date(value: str) -> datetime | None:
     return None
 
 
-def _svg_chart(points: list[tuple[datetime, float]], title: str) -> str:
-    width, height, padding = 760, 260, 38
-    values = [value for _, value in points]
-    minimum, maximum = min(values), max(values)
-    span = maximum - minimum or 1.0
-    coordinates = []
-    for index, (_, value) in enumerate(points):
-        x = padding + index * (width - 2 * padding) / max(1, len(points) - 1)
-        y = height - padding - (value - minimum) * (height - 2 * padding) / span
-        coordinates.append(f"{x:.1f},{y:.1f}")
-    return (
-        f'<figure><figcaption>{html.escape(title)}</figcaption>'
-        f'<svg viewBox="0 0 {width} {height}" role="img" '
-        f'aria-label="{html.escape(title)}">'
-        f'<line x1="{padding}" y1="{height-padding}" x2="{width-padding}" '
-        f'y2="{height-padding}" class="axis"/>'
-        f'<polyline points="{" ".join(coordinates)}" class="series"/>'
-        f'<text x="{padding}" y="20">max {maximum:.3g}</text>'
-        f'<text x="{padding}" y="{height-8}">min {minimum:.3g}</text>'
-        "</svg></figure>"
+def _percentile(values: list[float], fraction: float) -> float:
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+def _pearson(left_values: list[float], right_values: list[float]) -> float | None:
+    if len(left_values) < 3 or len(left_values) != len(right_values):
+        return None
+    left_mean = statistics.fmean(left_values)
+    right_mean = statistics.fmean(right_values)
+    numerator = sum(
+        (left - left_mean) * (right - right_mean)
+        for left, right in zip(left_values, right_values)
     )
+    denominator = math.sqrt(
+        sum((left - left_mean) ** 2 for left in left_values)
+        * sum((right - right_mean) ** 2 for right in right_values)
+    )
+    return numerator / denominator if denominator else None
+
+
+def _correlation_strength(value: float) -> str:
+    magnitude = abs(value)
+    if magnitude >= 0.8:
+        return "very strong"
+    if magnitude >= 0.6:
+        return "strong"
+    if magnitude >= 0.4:
+        return "moderate"
+    if magnitude >= 0.2:
+        return "weak"
+    return "very weak"
 
 
 def analyze_table(
@@ -196,11 +220,22 @@ def analyze_table(
 ) -> dict[str, Any]:
     if not rows:
         raise DataAnalysisError("The table contains headers but no data rows")
-    columns = {header: [row[index].strip() for row in rows] for index, header in enumerate(headers)}
-    missing = {name: sum(not value for value in values) for name, values in columns.items()}
+
+    columns = {
+        header: [row[index].strip() for row in rows]
+        for index, header in enumerate(headers)
+    }
+    missing = {
+        name: sum(not value for value in values)
+        for name, values in columns.items()
+    }
+    duplicate_rows = len(rows) - len({tuple(row) for row in rows})
+    total_cells = len(rows) * len(headers)
+    missing_cells = sum(missing.values())
 
     numeric: dict[str, list[float | None]] = {}
     dates: dict[str, list[datetime | None]] = {}
+    invalid_numeric: dict[str, int] = {}
     for name, values in columns.items():
         nonempty = [value for value in values if value]
         if not nonempty:
@@ -209,28 +244,54 @@ def analyze_table(
         date_values = [_date(value) for value in values]
         if sum(value is not None for value in numeric_values) / len(nonempty) >= 0.7:
             numeric[name] = numeric_values
+            invalid_numeric[name] = sum(
+                bool(raw) and parsed is None
+                for raw, parsed in zip(values, numeric_values)
+            )
         if sum(value is not None for value in date_values) / len(nonempty) >= 0.7:
             dates[name] = date_values
 
     statistics_rows = []
     for name, values in numeric.items():
         present = [value for value in values if value is not None]
+        first_quartile = _percentile(present, 0.25)
+        third_quartile = _percentile(present, 0.75)
+        interquartile_range = third_quartile - first_quartile
+        lower_fence = first_quartile - 1.5 * interquartile_range
+        upper_fence = third_quartile + 1.5 * interquartile_range
+        outliers = [
+            value for value in present if value < lower_fence or value > upper_fence
+        ]
+        mean = statistics.fmean(present)
+        deviation = statistics.stdev(present) if len(present) > 1 else 0.0
         statistics_rows.append(
             {
                 "column": name,
                 "count": len(present),
-                "mean": statistics.fmean(present),
+                "missing": missing[name],
+                "invalid": invalid_numeric[name],
+                "sum": sum(present),
+                "mean": mean,
                 "median": statistics.median(present),
                 "minimum": min(present),
+                "first_quartile": first_quartile,
+                "third_quartile": third_quartile,
                 "maximum": max(present),
-                "standard_deviation": statistics.stdev(present) if len(present) > 1 else 0.0,
+                "standard_deviation": deviation,
+                "coefficient_of_variation": deviation / abs(mean) if mean else None,
+                "outlier_count": len(outliers),
+                "outlier_examples": sorted(outliers, key=abs, reverse=True)[:5],
             }
         )
 
     date_column = None
     if requested_date_column:
         date_column = next(
-            (name for name in dates if name.casefold() == requested_date_column.casefold()),
+            (
+                name
+                for name in dates
+                if name.casefold() == requested_date_column.casefold()
+            ),
             None,
         )
         if date_column is None:
@@ -238,7 +299,10 @@ def analyze_table(
                 f"The requested date column {requested_date_column!r} is not usable as dates"
             )
     elif dates:
-        date_column = max(dates, key=lambda name: sum(value is not None for value in dates[name]))
+        date_column = max(
+            dates,
+            key=lambda name: sum(value is not None for value in dates[name]),
+        )
 
     value_columns = list(numeric)
     if requested_value_columns:
@@ -253,13 +317,14 @@ def analyze_table(
             value_columns.append(matched)
 
     trends = []
-    charts = []
     if date_column:
         for name in value_columns[:8]:
             points = sorted(
                 (
                     (date_value, number_value)
-                    for date_value, number_value in zip(dates[date_column], numeric[name])
+                    for date_value, number_value in zip(
+                        dates[date_column], numeric[name]
+                    )
                     if date_value is not None and number_value is not None
                 ),
                 key=lambda item: item[0],
@@ -268,18 +333,68 @@ def analyze_table(
                 continue
             x_values = [point[0].timestamp() / 86400 for point in points]
             y_values = [point[1] for point in points]
-            x_mean, y_mean = statistics.fmean(x_values), statistics.fmean(y_values)
+            x_mean = statistics.fmean(x_values)
+            y_mean = statistics.fmean(y_values)
             denominator = sum((value - x_mean) ** 2 for value in x_values)
             slope = (
-                sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, y_values))
+                sum(
+                    (x - x_mean) * (y - y_mean)
+                    for x, y in zip(x_values, y_values)
+                )
                 / denominator
                 if denominator
                 else 0.0
             )
             first, last = y_values[0], y_values[-1]
-            percentage_change = ((last - first) / abs(first) * 100) if first else None
-            tolerance = max(abs(y_mean) * 0.001, 1e-12)
-            direction = "stable" if abs(slope) <= tolerance else "upward" if slope > 0 else "downward"
+            percentage_change = (
+                (last - first) / abs(first) * 100 if first else None
+            )
+            fitted = [y_mean + slope * (value - x_mean) for value in x_values]
+            total_variation = sum((value - y_mean) ** 2 for value in y_values)
+            residual_variation = sum(
+                (value - estimate) ** 2
+                for value, estimate in zip(y_values, fitted)
+            )
+            r_squared = (
+                1 - residual_variation / total_variation
+                if total_variation
+                else 1.0
+            )
+            changes = [
+                {
+                    "start": points[index - 1][0].date().isoformat(),
+                    "end": points[index][0].date().isoformat(),
+                    "absolute_change": current - previous,
+                    "percentage_change": (
+                        (current - previous) / abs(previous) * 100
+                        if previous
+                        else None
+                    ),
+                }
+                for index, (previous, current) in enumerate(
+                    zip(y_values, y_values[1:]), start=1
+                )
+            ]
+            percentage_changes = [
+                change["percentage_change"]
+                for change in changes
+                if change["percentage_change"] is not None
+            ]
+            duration_years = (
+                points[-1][0] - points[0][0]
+            ).total_seconds() / (365.2425 * 86400)
+            annualized_change = None
+            if duration_years > 0 and first > 0 and last > 0:
+                annualized_change = (
+                    (last / first) ** (1 / duration_years) - 1
+                ) * 100
+            fitted_movement = slope * (x_values[-1] - x_values[0])
+            tolerance = max(abs(y_mean) * 0.01, 1e-12)
+            direction = (
+                "stable"
+                if abs(fitted_movement) <= tolerance
+                else "upward" if fitted_movement > 0 else "downward"
+            )
             chart_points = (
                 points
                 if len(points) <= 100
@@ -296,16 +411,36 @@ def analyze_table(
                     "first_value": first,
                     "last_value": last,
                     "percentage_change": percentage_change,
+                    "annualized_change": annualized_change,
+                    "r_squared": max(0.0, min(1.0, r_squared)),
+                    "average_period_change": (
+                        statistics.fmean(percentage_changes)
+                        if percentage_changes
+                        else None
+                    ),
+                    "period_change_volatility": (
+                        statistics.stdev(percentage_changes)
+                        if len(percentage_changes) > 1
+                        else 0.0 if percentage_changes else None
+                    ),
+                    "largest_increase": max(
+                        changes, key=lambda value: value["absolute_change"]
+                    ),
+                    "largest_decrease": min(
+                        changes, key=lambda value: value["absolute_change"]
+                    ),
                     "observations": len(points),
                     "start": points[0][0].date().isoformat(),
                     "end": points[-1][0].date().isoformat(),
                     "series": [
-                        {"date": date_value.date().isoformat(), "value": number_value}
+                        {
+                            "date": date_value.date().isoformat(),
+                            "value": number_value,
+                        }
                         for date_value, number_value in chart_points
                     ],
                 }
             )
-            charts.append(_svg_chart(points, f"{name} over {date_column}"))
 
     categories = []
     for name, values in columns.items():
@@ -313,11 +448,13 @@ def analyze_table(
             continue
         present = [value for value in values if value]
         if present:
+            top_values = Counter(present).most_common(10)
             categories.append(
                 {
                     "column": name,
                     "unique": len(set(present)),
-                    "top_values": Counter(present).most_common(5),
+                    "top_values": top_values,
+                    "most_common_share": top_values[0][1] / len(present),
                 }
             )
 
@@ -333,19 +470,80 @@ def analyze_table(
             if len(pairs) < 3:
                 continue
             left_values, right_values = zip(*pairs)
-            left_mean, right_mean = statistics.fmean(left_values), statistics.fmean(right_values)
-            numerator = sum(
-                (left - left_mean) * (right - right_mean)
-                for left, right in pairs
-            )
-            denominator = math.sqrt(
-                sum((left - left_mean) ** 2 for left in left_values)
-                * sum((right - right_mean) ** 2 for right in right_values)
-            )
-            if denominator:
+            correlation = _pearson(list(left_values), list(right_values))
+            if correlation is not None:
                 correlations.append(
-                    {"left": left_name, "right": right_name, "correlation": numerator / denominator}
+                    {
+                        "left": left_name,
+                        "right": right_name,
+                        "correlation": correlation,
+                        "strength": _correlation_strength(correlation),
+                        "observations": len(pairs),
+                    }
                 )
+
+    findings = []
+    for trend in trends:
+        change = trend["percentage_change"]
+        change_text = f" ({change:+.1f}% overall)" if change is not None else ""
+        findings.append(
+            f'{trend["column"]} shows a {trend["direction"]} trajectory from '
+            f'{trend["start"]} to {trend["end"]}{change_text}; the linear trend '
+            f'explains {trend["r_squared"] * 100:.1f}% of observed variation.'
+        )
+    strongest = sorted(
+        correlations,
+        key=lambda value: abs(value["correlation"]),
+        reverse=True,
+    )[:3]
+    for item in strongest:
+        if abs(item["correlation"]) >= 0.4:
+            relationship = "positive" if item["correlation"] > 0 else "negative"
+            findings.append(
+                f'{item["left"]} and {item["right"]} have a '
+                f'{item["strength"]} {relationship} association '
+                f'(r={item["correlation"]:.2f}, n={item["observations"]}).'
+            )
+    outlier_columns = [
+        f'{item["column"]} ({item["outlier_count"]})'
+        for item in statistics_rows
+        if item["outlier_count"]
+    ]
+    if outlier_columns:
+        findings.append(
+            "Potential IQR outliers were detected in "
+            + ", ".join(outlier_columns)
+            + "."
+        )
+    if duplicate_rows or missing_cells:
+        findings.append(
+            f"Data quality review found {duplicate_rows} duplicate rows and "
+            f"{missing_cells} missing cells out of {total_cells}."
+        )
+    if not findings:
+        findings.append(
+            "The available data does not contain enough variation or time structure "
+            "for a reliable trend or relationship finding."
+        )
+
+    limitations = [
+        "Associations and trends are descriptive and do not establish causality.",
+        "Results depend on the accuracy, definitions, and collection process of the source data.",
+    ]
+    if truncated:
+        limitations.insert(
+            0,
+            "The configured row limit was reached, so conclusions cover only the analyzed rows.",
+        )
+    if len(rows) < 30:
+        limitations.append(
+            f"The analysis contains only {len(rows)} rows; estimates may be sensitive to individual observations."
+        )
+    invalid_total = sum(invalid_numeric.values())
+    if invalid_total:
+        limitations.append(
+            f"{invalid_total} non-empty values in numeric columns could not be parsed and were excluded."
+        )
 
     return {
         "question": question,
@@ -353,76 +551,22 @@ def analyze_table(
         "column_count": len(headers),
         "columns": headers,
         "missing": missing,
+        "quality": {
+            "total_cells": total_cells,
+            "missing_cells": missing_cells,
+            "completeness": (
+                1 - missing_cells / total_cells if total_cells else 0.0
+            ),
+            "duplicate_rows": duplicate_rows,
+            "duplicate_rate": duplicate_rows / len(rows),
+            "invalid_numeric_values": invalid_numeric,
+        },
         "numeric_statistics": statistics_rows,
         "date_column": date_column,
         "trends": trends,
         "categories": categories,
         "correlations": correlations,
-        "charts": charts,
+        "findings": findings,
+        "limitations": limitations,
         "truncated": truncated,
     }
-
-
-def render_html_report(
-    analysis: dict[str, Any], *, title: str, source_name: str
-) -> str:
-    def table(headers: list[str], body: list[list[str]]) -> str:
-        head = "".join(f"<th>{html.escape(value)}</th>" for value in headers)
-        rows = "".join(
-            "<tr>" + "".join(f"<td>{html.escape(value)}</td>" for value in row) + "</tr>"
-            for row in body
-        )
-        return f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>"
-
-    stats_body = [
-        [
-            item["column"], str(item["count"]), f'{item["mean"]:.4g}',
-            f'{item["median"]:.4g}', f'{item["minimum"]:.4g}',
-            f'{item["maximum"]:.4g}', f'{item["standard_deviation"]:.4g}',
-        ]
-        for item in analysis["numeric_statistics"]
-    ]
-    trend_body = [
-        [
-            item["column"], item["direction"], item["start"], item["end"],
-            f'{item["slope_per_day"]:.4g}',
-            "n/a" if item["percentage_change"] is None else f'{item["percentage_change"]:.2f}%',
-            str(item["observations"]),
-        ]
-        for item in analysis["trends"]
-    ]
-    quality_body = [
-        [name, str(count), f'{count / analysis["row_count"] * 100:.1f}%']
-        for name, count in analysis["missing"].items()
-    ]
-    category_body = [
-        [item["column"], str(item["unique"]), ", ".join(f"{name} ({count})" for name, count in item["top_values"])]
-        for item in analysis["categories"]
-    ]
-    correlation_body = [
-        [item["left"], item["right"], f'{item["correlation"]:.3f}']
-        for item in sorted(analysis["correlations"], key=lambda item: abs(item["correlation"]), reverse=True)
-    ]
-    limitation = (
-        "<p class='warning'>The configured row limit was reached; conclusions use the rows shown.</p>"
-        if analysis["truncated"] else ""
-    )
-    question = html.escape(analysis["question"] or "Comprehensive exploratory analysis")
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>{html.escape(title)}</title><style>
-body{{font:15px system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 24px;color:#172033}}
-h1,h2{{color:#102a43}} .meta{{color:#52606d}} table{{border-collapse:collapse;width:100%;margin:12px 0 28px}}
-th,td{{border:1px solid #d9e2ec;padding:8px;text-align:left}} th{{background:#f0f4f8}}
-figure{{margin:24px 0}} figcaption{{font-weight:650;margin-bottom:8px}} svg{{width:100%;background:#f8fafc}}
-.axis{{stroke:#829ab1}} .series{{fill:none;stroke:#2563eb;stroke-width:3}} .warning{{background:#fff3cd;padding:12px}}
-</style></head><body><h1>{html.escape(title)}</h1>
-<p class="meta">Source: {html.escape(source_name)} · {analysis["row_count"]} rows · {analysis["column_count"]} columns</p>
-<p><strong>Analysis request:</strong> {question}</p>{limitation}
-<h2>Data quality</h2>{table(["Column", "Missing", "Missing %"], quality_body)}
-<h2>Descriptive statistics</h2>{table(["Column", "Count", "Mean", "Median", "Min", "Max", "Std. dev."], stats_body) if stats_body else "<p>No numeric columns were detected.</p>"}
-<h2>Trends</h2>{table(["Measure", "Direction", "Start", "End", "Slope/day", "Change", "Points"], trend_body) if trend_body else "<p>No usable date-and-number combination was detected.</p>"}
-{"".join(analysis["charts"])}
-<h2>Categories</h2>{table(["Column", "Unique values", "Most frequent"], category_body) if category_body else "<p>No categorical columns were detected.</p>"}
-<h2>Correlations</h2>{table(["First measure", "Second measure", "Pearson r"], correlation_body) if correlation_body else "<p>Not enough paired numeric data for correlations.</p>"}
-</body></html>"""

@@ -10,11 +10,11 @@ from pypdf import PdfReader
 from agent.base import DelegationContext
 from agent.specialists.data_analysis import AnalyzeTableAgent
 from services.grist import read_grist_table
-from services.tabular_analysis import parse_ods_data
+from services.tabular_analysis import analyze_table, parse_ods_data
 
 
 class DataAnalysisAgentTests(unittest.TestCase):
-    def test_analyzes_local_csv_and_creates_report_with_trend_chart(self):
+    def test_analyzes_local_csv_and_creates_comprehensive_pdf(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "sales.csv").write_text(
@@ -44,7 +44,6 @@ class DataAnalysisAgentTests(unittest.TestCase):
                     },
                     "question": "What is the revenue tendency over time?",
                     "report_name": "sales-analysis",
-                    "report_format": "html",
                     "date_column": "date",
                     "value_columns": ["revenue"],
                 },
@@ -55,11 +54,50 @@ class DataAnalysisAgentTests(unittest.TestCase):
             self.assertEqual(result["rows_analyzed"], 3)
             self.assertEqual(result["trends"][0]["direction"], "upward")
             self.assertGreater(result["trends"][0]["percentage_change"], 79)
-            self.assertEqual(result["artifact"]["media_type"], "text/html")
-            report = (root / "sales-analysis.html").read_text(encoding="utf-8")
-            self.assertIn("What is the revenue tendency over time?", report)
-            self.assertIn("<svg", report)
-            self.assertIn("upward", report)
+            self.assertGreater(result["trends"][0]["r_squared"], 0.9)
+            self.assertEqual(result["artifact"]["media_type"], "application/pdf")
+            report_path = root / "sales-analysis.pdf"
+            self.assertTrue(report_path.read_bytes().startswith(b"%PDF-"))
+            report = "".join(
+                page.extract_text() or "" for page in PdfReader(report_path).pages
+            )
+            self.assertIn("Executive summary", report)
+            self.assertIn("Numeric distributions", report)
+            self.assertIn("Methodology", report)
+            self.assertIn("Limitations and interpretation", report)
+
+    def test_analysis_includes_quality_outliers_and_period_dynamics(self):
+        analysis = analyze_table(
+            ["date", "revenue", "region"],
+            [
+                ["2025-01-01", "10", "North"],
+                ["2025-02-01", "11", "North"],
+                ["2025-03-01", "12", "South"],
+                ["2025-04-01", "13", "North"],
+                ["2025-05-01", "14", "North"],
+                ["2025-06-01", "15", "South"],
+                ["2025-07-01", "100", "North"],
+                ["2025-01-01", "10", "North"],
+            ],
+            question="Explain revenue evolution",
+            requested_date_column="date",
+            requested_value_columns=["revenue"],
+        )
+
+        self.assertEqual(analysis["quality"]["duplicate_rows"], 1)
+        self.assertEqual(analysis["numeric_statistics"][0]["outlier_count"], 1)
+        trend = analysis["trends"][0]
+        self.assertIn("r_squared", trend)
+        self.assertIn("annualized_change", trend)
+        self.assertIn("largest_increase", trend)
+        self.assertIn("period_change_volatility", trend)
+        self.assertTrue(analysis["findings"])
+        self.assertTrue(analysis["limitations"])
+
+    def test_html_is_not_an_available_report_format(self):
+        report_format = AnalyzeTableAgent.parameters["properties"].get("report_format")
+
+        self.assertIsNone(report_format)
 
     def test_creates_a_pdf_report_by_default(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -102,7 +140,7 @@ class DataAnalysisAgentTests(unittest.TestCase):
                 page.extract_text() or "" for page in PdfReader(report_path).pages
             )
             self.assertIn("évolution", extracted)
-            self.assertIn("Trends", extracted)
+            self.assertIn("Time-series analysis", extracted)
 
     def test_parses_first_sheet_from_an_ods_spreadsheet(self):
         content_xml = b"""<?xml version="1.0" encoding="UTF-8"?>

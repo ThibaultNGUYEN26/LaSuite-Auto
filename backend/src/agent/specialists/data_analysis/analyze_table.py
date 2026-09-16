@@ -1,4 +1,4 @@
-"""Analyze CSV, ODS, or Grist data and create a self-contained HTML report."""
+"""Analyze CSV, ODS, or Grist data and create a comprehensive PDF report."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from services.drive import download_drive_file
 from services.grist import read_grist_table
 from services.local_files import (
     create_local_binary_file,
-    create_local_text_file,
     read_local_file,
 )
 from services.pdf_report import render_pdf_report
@@ -22,7 +21,6 @@ from services.tabular_analysis import (
     analyze_table,
     parse_csv_data,
     parse_ods_data,
-    render_html_report,
 )
 
 
@@ -33,10 +31,11 @@ ODS_MEDIA_TYPE = "application/vnd.oasis.opendocument.spreadsheet"
 class AnalyzeTableAgent(SpecialistAgent):
     name = "data_analyze_table"
     description = (
-        "Perform a bounded statistical analysis of a CSV file, OpenDocument ODS "
-        "spreadsheet, or Grist document and create a local PDF report by default "
-        "with data-quality checks, descriptive statistics, date-based trends, "
-        "charts, category frequencies, and correlations. Use the "
+        "Perform a comprehensive statistical analysis of a CSV file, OpenDocument "
+        "ODS spreadsheet, or Grist document and create a local PDF report with an "
+        "executive summary, data-quality checks, distributions, outliers, date-based "
+        "trends, charts, period changes, category concentration, correlations, "
+        "methodology, and limitations. Use the "
         "user's exact analytical question as question. The returned report artifact "
         "can be passed directly to drive_upload_file when the user wants the report "
         "in Drive."
@@ -88,12 +87,6 @@ class AnalyzeTableAgent(SpecialistAgent):
             "report_name": {
                 "type": "string",
                 "description": "Output report filename without its extension.",
-            },
-            "report_format": {
-                "type": "string",
-                "enum": ["pdf", "html"],
-                "description": "Output format. Defaults to PDF.",
-                "default": "pdf",
             },
             "output_directory": {
                 "type": "string",
@@ -173,9 +166,6 @@ class AnalyzeTableAgent(SpecialistAgent):
             raise DataAnalysisError("question must be a string")
         if not isinstance(report_name, str):
             raise DataAnalysisError("report_name must be a string")
-        report_format = arguments.get("report_format", "pdf")
-        if report_format not in {"pdf", "html"}:
-            raise DataAnalysisError("report_format must be pdf or html")
         output_directory = arguments.get("output_directory", ".")
         if not isinstance(output_directory, str):
             raise DataAnalysisError("output_directory must be a string")
@@ -239,41 +229,24 @@ class AnalyzeTableAgent(SpecialistAgent):
             truncated=truncated,
         )
         clean_report_name = report_name.strip()
-        for suffix in (".pdf", ".html"):
-            if clean_report_name.lower().endswith(suffix):
-                clean_report_name = clean_report_name[: -len(suffix)]
-                break
+        if clean_report_name.lower().endswith(".pdf"):
+            clean_report_name = clean_report_name[:-4]
         report_title = clean_report_name or "Data analysis report"
         try:
-            if report_format == "pdf":
-                report_data = render_pdf_report(
-                    analysis,
-                    title=report_title,
-                    source_name=source_name,
-                )
-                created = create_local_binary_file(
-                    self.local_files_root,
-                    directory=output_directory,
-                    file_name=report_title,
-                    extension="pdf",
-                    data=report_data,
-                    max_bytes=self.max_report_bytes,
-                    media_type="application/pdf",
-                )
-            else:
-                report_content = render_html_report(
-                    analysis,
-                    title=report_title,
-                    source_name=source_name,
-                )
-                created = create_local_text_file(
-                    self.local_files_root,
-                    directory=output_directory,
-                    file_name=report_title,
-                    extension="html",
-                    content=report_content,
-                    max_bytes=self.max_report_bytes,
-                )
+            report_data = render_pdf_report(
+                analysis,
+                title=report_title,
+                source_name=source_name,
+            )
+            created = create_local_binary_file(
+                self.local_files_root,
+                directory=output_directory,
+                file_name=report_title,
+                extension="pdf",
+                data=report_data,
+                max_bytes=self.max_report_bytes,
+                media_type="application/pdf",
+            )
         except LocalFilesError as exc:
             raise DataAnalysisError(str(exc)) from exc
 
@@ -290,7 +263,7 @@ class AnalyzeTableAgent(SpecialistAgent):
                 for trend in analysis["trends"]
             ],
             "correlations": analysis["correlations"],
-            "report_format": report_format,
+            "report_format": "pdf",
             "report": created,
             "artifact": created["artifact"],
         }

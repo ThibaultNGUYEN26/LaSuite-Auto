@@ -49,14 +49,14 @@ def create_block() -> AgentBlock:
                     ArtifactContract("grist_document"),
                 ),
                 produces=(
-                    ArtifactContract("file", ("application/pdf", "text/html")),
+                    ArtifactContract("file", ("application/pdf",)),
                 ),
             ),
         ),
         workflows=(
             WorkflowManifest(
                 "data_analysis.publish_report",
-                "Analyze tabular data, create an HTML report, and publish it to Drive.",
+                "Analyze tabular data, create a comprehensive PDF report, and publish it to Drive.",
                 ("data_analyze_table", "drive_upload_file"),
             ),
         ),
