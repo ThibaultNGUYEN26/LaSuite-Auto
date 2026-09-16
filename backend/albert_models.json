@@ -1,21 +1,17 @@
 {
   "source": "https://albert.api.etalab.gouv.fr/v1/models",
-  "last_verified": "2026-09-15",
+  "last_verified": "2026-09-16",
   "models": [
     {
-      "id": "deepseek-v4-flash",
+      "id": "gpt-oss-120b",
       "type": "text-generation"
     },
     {
-      "id": "mistral-medium-2508",
+      "id": "qwen3-coder-30b-a3b-instruct",
       "type": "text-generation"
     },
     {
-      "id": "qwen3-coder-30b-A3b-instruct",
-      "type": "text-generation"
-    },
-    {
-      "id": "openai/gpt-oss-120b",
+      "id": "deepseek-v4-flash-0731",
       "type": "text-generation"
     },
     {
@@ -37,6 +33,26 @@
     {
       "id": "mistral-medium-3-5",
       "type": "image-text-to-text"
+    },
+    {
+      "id": "bge-m3",
+      "type": "text-embeddings-inference"
+    },
+    {
+      "id": "bge-reranker-v2-m3",
+      "type": "text-classification"
+    },
+    {
+      "id": "mistral-ocr-2512",
+      "type": "image-to-text"
+    },
+    {
+      "id": "whisper-large-v3",
+      "type": "automatic-speech-recognition"
+    },
+    {
+      "id": "qwen3-vl-embedding-8b",
+      "type": "text-embeddings-inference"
     }
   ]
 }

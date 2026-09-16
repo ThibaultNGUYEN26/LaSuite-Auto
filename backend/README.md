@@ -26,6 +26,12 @@ Copy `.env.example` to `.env` and adjust as needed:
   session, used by file-creation requests.
 - `DRIVE_MAX_CREATE_BYTES` — maximum UTF-8 content size accepted by the Drive
   creation specialist. Defaults to 1 MiB.
+- `DRIVE_MAX_UPLOAD_BYTES` — maximum size of an existing local file uploaded to
+  Drive. Defaults to 50 MiB.
+- `GRIST_API_KEY` — bearer API key created from Grist account settings.
+- `GRIST_ORG_ID` — organization identifier from the Grist URL; for `/o/docs/`,
+  use `docs`.
+- `GRIST_WORKSPACE_ID` — optional default workspace where CSV imports are saved.
 
 ## Structure
 
@@ -46,20 +52,23 @@ backend/src/
     └── memory.py        # Conversation history, context management
 ```
 
-## Specialist-agent routing
+## Capability-block routing
 
-The orchestrator is now independent from specialist implementations:
+The orchestrator is independent from every integration implementation:
 
-- `agent/base.py` defines the contract shared with every agent.
-- `agent/registry.py` advertises available agents and dispatches model calls.
-- `agent/drive.py` implements Drive configuration and authenticated recursive
-  item listing.
-- `providers/albert.py` contains only the Albert API client.
-- `agent/orchestrator.py` coordinates the model/agent loop and registers the
-  specialists available at runtime.
+- `agent/orchestrator.py` contains only reasoning, chaining, delegation, and
+  result synthesis.
+- `agent/blocks.py` discovers built-in `agent/specialists/*/block.py` factories
+  and third-party packages installed through the
+  `lasuite_automations.blocks` entry-point group.
+- `agent/runtime.py` combines the selected model provider with the discovered
+  registry.
+- `agent/base.py` and `agent/registry.py` define and dispatch individual
+  capabilities.
 
-See `src/agent/README.md` for the Python-agent integration contract and safety
-requirements.
+Adding Drive, Docs, or any other block never requires an edit to the
+orchestrator. See `src/agent/README.md` for the open block contract, packaging
+example, and safety requirements.
 
 ## Run the first agent
 

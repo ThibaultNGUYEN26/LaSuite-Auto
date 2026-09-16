@@ -17,6 +17,10 @@ class LocalFilesError(SpecialistAgentError):
     """A local-files operation could not be completed safely."""
 
 
+class GristAPIError(SpecialistAgentError):
+    """Grist could not complete a requested operation."""
+
+
 class CodeExecutionError(SpecialistAgentError):
     """A code-execution operation could not be completed safely."""
 

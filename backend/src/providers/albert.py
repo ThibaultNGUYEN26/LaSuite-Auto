@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -10,6 +11,7 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 import httpx
+import truststore
 
 from agent.errors import AlbertAPIError
 
@@ -129,6 +131,7 @@ class AlbertClient:
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream one chat completion, yielding content deltas as they arrive.
 
@@ -147,14 +150,22 @@ class AlbertClient:
             "model": model,
             "messages": messages,
             "tools": tools,
-            "tool_choice": "auto",
+            "tool_choice": tool_choice,
             "temperature": 0.2,
             "stream": True,
         }
 
         tool_call_fragments: dict[int, dict[str, Any]] = {}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # httpx defaults to certifi, which does not include certificates
+            # installed in the Windows trust store (for example an internal
+            # administration proxy CA). Use the OS trust store consistently,
+            # just as the rest of the desktop application does.
+            ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                verify=ssl_context,
+            ) as client:
                 async with client.stream(
                     "POST", endpoint, headers=headers, json=payload
                 ) as response:
