@@ -3,6 +3,7 @@ import type { ChatMessage, StreamEvent } from '../types'
 const BACKEND_URL = import.meta.env.BACKEND_URL ?? 'http://127.0.0.1:8000'
 
 export async function streamChatMessage(
+  chatId: string,
   messages: ChatMessage[],
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal
@@ -10,7 +11,10 @@ export async function streamChatMessage(
   const response = await fetch(`${BACKEND_URL}/api/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: messages.map(({ role, content }) => ({ role, content })) }),
+    body: JSON.stringify({
+      chat_id: chatId,
+      messages: messages.map(({ role, content }) => ({ role, content }))
+    }),
     signal
   })
 

@@ -27,6 +27,8 @@ node_modules/
 .vite/
 coverage/
 *.tsbuildinfo
+package-lock.json
+package.json
 
 # Conf and secret
 .env
