@@ -44,7 +44,7 @@
 
 .chat-composer-disclaimer {
   text-align: center;
-  font-size: var(--c--theme--font--sizes--xs);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
   margin: 8px 0 0 0;
 }

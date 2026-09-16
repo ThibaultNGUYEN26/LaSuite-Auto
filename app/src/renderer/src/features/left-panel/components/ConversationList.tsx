@@ -1,7 +1,6 @@
 import { HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
 import { useState } from 'react'
 import { createConversation } from '../api/createConversation'
-import './ConversationList.css'
 
 const PLACEHOLDER_CONVERSATIONS = [
   { id: '1', title: 'Trip planning ideas', subtitle: 'Yesterday' },
@@ -30,28 +29,30 @@ function ConversationList({ onNewConversation }: ConversationListProps): React.J
   }
 
   return (
-    <div className="conversation-list">
+    <div className="sidebar-section">
       <button
         type="button"
-        className="conversation-list-new-button"
+        className="sidebar-row"
         disabled={isCreating}
         onClick={handleNewConversation}
         aria-label="New conversation"
       >
-        <span className="conversation-list-new-button-icon">
+        <span className="sidebar-row-icon">
           <Icon name="add" size={IconSize.SMALL} />
         </span>
-        New conversation
+        <span className="sidebar-row-text sidebar-row-title">New conversation</span>
       </button>
-      <HorizontalSeparator />
-      <div className="conversation-list-items">
-        {PLACEHOLDER_CONVERSATIONS.map((conversation) => (
-          <div key={conversation.id} className="conversation-list-item">
-            <div className="conversation-list-item-title">{conversation.title}</div>
-            <div className="conversation-list-item-subtitle">{conversation.subtitle}</div>
-          </div>
-        ))}
+      <div className="sidebar-divider">
+        <HorizontalSeparator />
       </div>
+      {PLACEHOLDER_CONVERSATIONS.map((conversation) => (
+        <div key={conversation.id} className="sidebar-row">
+          <div className="sidebar-row-text">
+            <div className="sidebar-row-title">{conversation.title}</div>
+            <div className="sidebar-row-subtitle">{conversation.subtitle}</div>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
