@@ -1,6 +1,7 @@
 import '@gouvfr-lasuite/ui-kit/style'
 import 'material-icons/iconfont/material-icons.css'
 import './styles/app.css'
+import './styles/sidebar.css'
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

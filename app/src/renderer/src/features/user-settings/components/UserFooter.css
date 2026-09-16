@@ -1,0 +1,47 @@
+.user-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--sm);
+  width: 100%;
+  padding: var(--c--globals--spacings--sm);
+  border: none;
+  border-top: 1px solid var(--c--contextuals--border--semantic--neutral--primary);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s ease;
+}
+
+.user-footer:hover,
+.user-footer:focus-visible {
+  background-color: var(--c--contextuals--background--semantic--overlay--primary);
+}
+
+.user-footer__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.user-footer__name {
+  font-size: var(--c--globals--font--sizes--md);
+  font-weight: 500;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-footer__email {
+  font-size: var(--c--globals--font--sizes--xs);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-footer__icon {
+  flex-shrink: 0;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
