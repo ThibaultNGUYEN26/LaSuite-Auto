@@ -6,10 +6,18 @@ from sqlalchemy.orm import Session
 from agent.errors import AgentError
 from agent.events import AgentEvent
 from agent.runtime import draft_workflow_from_messages, run_stream
+from agent.specializations import list_specializations
+
 from config import settings
 from db import get_db, init_db
 from repositories import workflow_repository
-from schemas import ChatRequest, WorkflowCreate, WorkflowDraftRequest, WorkflowOut
+from schemas import (
+    AgentSpecializationOut,
+    ChatRequest,
+    WorkflowCreate,
+    WorkflowDraftRequest,
+    WorkflowOut,
+)
 
 app = FastAPI(title="Auto backend")
 
@@ -67,6 +75,18 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/agent/specializations")
+def get_agent_specializations() -> list[AgentSpecializationOut]:
+    """List the specialist capability groups the orchestrator can route to.
+
+    ``enabled`` is always ``True`` for now — there is no persistence layer
+    for per-user preferences yet, so disabling a specialization here has no
+    effect on the orchestrator. The UI setting exists as a preview of that
+    future capability.
+    """
+    return list_specializations()
 
 
 @app.post("/api/workflows/draft")

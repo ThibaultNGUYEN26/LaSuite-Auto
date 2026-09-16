@@ -12,10 +12,6 @@
   padding-top: var(--c--globals--spacings--sm);
 }
 
-.sidebar-divider {
-  margin: var(--c--globals--spacings--xs) 0;
-}
-
 .sidebar-heading {
   padding: var(--c--globals--spacings--sm) var(--c--globals--spacings--sm) 0;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
