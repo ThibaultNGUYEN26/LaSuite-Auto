@@ -17,6 +17,24 @@ export async function listConversations(): Promise<SavedConversation[]> {
   return response.json() as Promise<SavedConversation[]>
 }
 
+export async function generateConversationTitle(
+  chatId: string,
+  prompt: string,
+  response: string
+): Promise<string> {
+  const res = await fetch(`${BACKEND_URL}/api/conversations/title`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, prompt, response })
+  })
+  if (!res.ok) {
+    const error = await res.text().catch(() => '')
+    throw new Error(`backend responded with ${res.status}${error ? `: ${error}` : ''}`)
+  }
+  const data = (await res.json()) as { title: string }
+  return data.title
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const response = await fetch(`${BACKEND_URL}/api/conversations/${id}`, { method: 'DELETE' })
   if (!response.ok) {

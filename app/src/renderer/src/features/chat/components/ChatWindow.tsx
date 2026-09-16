@@ -5,7 +5,10 @@ import { streamChatMessage } from '../api/streamChatMessage'
 import { applyStreamEvent } from '../utils/applyStreamEvent'
 import type { ChatMessage, StreamEvent, WorkflowDraft } from '../types'
 import { draftWorkflow, type Workflow } from '../../workflows/api/workflows'
-import type { SavedConversation } from '../../left-panel/api/conversations'
+import {
+  generateConversationTitle,
+  type SavedConversation
+} from '../../left-panel/api/conversations'
 import SaveWorkflowModal from '../../workflows/components/SaveWorkflowModal'
 import './ChatWindow.css'
 import Composer from './Composer'
@@ -66,6 +69,9 @@ function ChatWindow({
   const abortControllerRef = useRef<AbortController | null>(null)
   const pendingEventsRef = useRef<StreamEvent[]>([])
   const flushHandleRef = useRef<number | null>(null)
+  // Existing conversations already have a title; only generate one for a brand-new chat's
+  // first exchange, and only once, even if the effect/handler re-runs.
+  const titleGeneratedRef = useRef(Boolean(initialConversation))
 
   useEffect(() => {
     return () => {
@@ -133,7 +139,17 @@ function ChatWindow({
         setSuggestion(event.data)
         return
       }
-      if (event.type === 'final') onConversationSaved?.()
+      if (event.type === 'final') {
+        onConversationSaved?.()
+        if (!titleGeneratedRef.current) {
+          titleGeneratedRef.current = true
+          generateConversationTitle(chatId, userMessage.content, event.data.content)
+            .then(() => onConversationSaved?.())
+            .catch(() => {
+              // Title generation is a nicety; the fallback (first-message) title still works.
+            })
+        }
+      }
 
       pendingEventsRef.current.push(event)
 
