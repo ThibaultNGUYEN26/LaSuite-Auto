@@ -1,7 +1,7 @@
 .chat-composer {
   position: relative;
   width: 100%;
-  max-width: var(--chat-content-max-width, 750px);
+  max-width: var(--chat-composer-max-width, 750px);
   margin: 0 auto;
   padding: 0 12px 20px 12px;
   background-color: var(--c--contextuals--background--surface--secondary);

@@ -5,6 +5,7 @@
 
 .chat {
   --chat-content-max-width: 950px;
+  --chat-composer-max-width: 750px;
 
   display: flex;
   flex-direction: column;
