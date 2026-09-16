@@ -10,3 +10,10 @@
   flex-direction: column;
   height: 100%;
 }
+
+.workflow-active-banner,
+.workflow-suggestion {
+  width: 100%;
+  max-width: var(--chat-content-max-width, 750px);
+  margin: var(--c--globals--spacings--sm) auto 0;
+}
