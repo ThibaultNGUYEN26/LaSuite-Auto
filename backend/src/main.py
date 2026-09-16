@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from agent.errors import AgentError
 from agent.events import AgentEvent
-from agent.runtime import draft_workflow_from_messages, run_stream
+from agent.runtime import draft_workflow_from_messages, generate_chat_title, run_stream
 from agent.specializations import list_specializations
 
 from config import settings
@@ -17,6 +17,8 @@ from schemas import (
     ChatMessage,
     ChatRead,
     ChatRequest,
+    ChatTitleRequest,
+    ChatTitleResponse,
     WorkflowCreate,
     WorkflowDraftRequest,
     WorkflowOut,
@@ -99,6 +101,22 @@ async def chat_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/conversations/title", response_model=ChatTitleResponse)
+async def create_conversation_title(
+    request: ChatTitleRequest,
+    db: Session = Depends(get_db),
+) -> ChatTitleResponse:
+    """Generate a short display title from the conversation's first exchange."""
+    try:
+        title = await generate_chat_title(request.prompt, request.response)
+    except AgentError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if request.chat_id and chat_repository.rename(db, request.chat_id, title) is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return ChatTitleResponse(title=title)
 
 
 @app.get("/api/agent/specializations")

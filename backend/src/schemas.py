@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
@@ -13,6 +13,16 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     chat_id: str | None = None
     messages: list[ChatMessage]
+
+
+class ChatTitleRequest(BaseModel):
+    chat_id: str | None = None
+    prompt: str = Field(min_length=1, max_length=8_000)
+    response: str = Field(min_length=1, max_length=16_000)
+
+
+class ChatTitleResponse(BaseModel):
+    title: str
 
 
 class WorkflowDraft(BaseModel):

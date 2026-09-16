@@ -100,3 +100,30 @@ curl -s http://127.0.0.1:8000/api/chat \
 The Electron renderer sends this same POST request. Its backend URL defaults to
 `http://127.0.0.1:8000`; copy `app/.env.example` to `app/.env` to override
 `VITE_BACKEND_URL` when needed.
+
+## Generate a conversation title
+
+After the first assistant response is complete, the frontend can generate a
+short title from the first exchange:
+
+```http
+POST /api/conversations/title
+Content-Type: application/json
+
+{
+  "chat_id": "optional-conversation-id",
+  "prompt": "Analyse the sales figures for this quarter",
+  "response": "Sales increased by 12% compared with last quarter."
+}
+```
+
+The response is:
+
+```json
+{
+  "title": "Quarterly sales trend"
+}
+```
+
+When `chat_id` is provided, the backend also saves the generated title on that
+conversation. Without it, the endpoint only returns the title.

@@ -35,7 +35,6 @@ def save_history(
         chat = Chat(id=chat_id, title=title[:200])
         db.add(chat)
     else:
-        chat.title = title[:200]
         chat.messages.clear()
 
     chat.messages.extend(
