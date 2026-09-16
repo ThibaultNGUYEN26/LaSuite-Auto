@@ -9,7 +9,7 @@ from typing import Any
 
 from agent.base import DelegationContext, SpecialistAgent
 from agent.errors import DriveAPIError
-from services.drive import create_drive_file, get_drive_config
+from services.drive import create_drive_file, resolve_drive_upload_acl
 
 
 EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$")
@@ -98,15 +98,7 @@ class DriveCreateFileAgent(SpecialistAgent):
             )
         filename = f"{file_name}.{extension}"
         content_type = mimetypes.guess_type(filename)[0] or "text/plain"
-        upload_acl = self.upload_acl
-        if upload_acl is None:
-            config = get_drive_config(self.base_url)
-            configured_acl = config.get("AWS_S3_UPLOAD_ACL")
-            if configured_acl is not None and not isinstance(configured_acl, str):
-                raise DriveAPIError("Drive returned an invalid upload configuration")
-            upload_acl = configured_acl
-        if not upload_acl or upload_acl == "default":
-            upload_acl = None
+        upload_acl = resolve_drive_upload_acl(self.base_url, self.upload_acl)
         return create_drive_file(
             self.base_url,
             self.session_id,

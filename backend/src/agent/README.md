@@ -84,6 +84,20 @@ The storage ACL is read from Drive automatically, unless `DRIVE_UPLOAD_ACL` over
 The specialist creates text content with extensions such as `.txt`, `.md`, `.csv`,
 or `.json`; changing an extension does not generate a binary PDF or DOCX document.
 
+`drive_upload_file` handles existing local files whose exact bytes must be
+preserved, including PDFs, images, archives, office documents, and arbitrary
+binary formats. Its source path is restricted to `LOCAL_FILES_ROOT`, it can
+target a Drive folder UUID, and uploads are bounded by `DRIVE_MAX_UPLOAD_BYTES`.
+
+## Importing CSV files into Grist
+
+`grist_list_workspaces` discovers available destination workspaces and their
+documents. `grist_import_csv` creates a new Grist document from UTF-8 CSV text,
+a local CSV below `LOCAL_FILES_ROOT`, or a CSV downloaded from La Suite Drive.
+Set `GRIST_API_KEY`, `GRIST_ORG_ID`, and optionally `GRIST_WORKSPACE_ID` in
+`.env`. Imports are bounded by `GRIST_MAX_IMPORT_BYTES` and are performed only
+after an explicit user request; existing Grist documents are not replaced.
+
 ## Routing flow
 
 1. `OrchestratorAgent` sends the conversation and registered tool definitions

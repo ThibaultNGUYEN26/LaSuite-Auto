@@ -95,9 +95,9 @@ class DriveFileCreationTests(unittest.TestCase):
         self.assertIsNone(create_file.call_args.kwargs["upload_acl"])
 
     @patch("agent.specialists.drive.create_file.create_drive_file")
-    @patch("agent.specialists.drive.create_file.get_drive_config")
-    def test_agent_uses_drive_upload_acl(self, get_config, create_file):
-        get_config.return_value = {"AWS_S3_UPLOAD_ACL": "private"}
+    @patch("agent.specialists.drive.create_file.resolve_drive_upload_acl")
+    def test_agent_uses_drive_upload_acl(self, resolve_acl, create_file):
+        resolve_acl.return_value = "private"
         create_file.return_value = {"status": "created"}
         agent = DriveCreateFileAgent("http://drive:8071", "session")
 

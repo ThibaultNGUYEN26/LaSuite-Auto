@@ -26,6 +26,12 @@ Copy `.env.example` to `.env` and adjust as needed:
   session, used by file-creation requests.
 - `DRIVE_MAX_CREATE_BYTES` — maximum UTF-8 content size accepted by the Drive
   creation specialist. Defaults to 1 MiB.
+- `DRIVE_MAX_UPLOAD_BYTES` — maximum size of an existing local file uploaded to
+  Drive. Defaults to 50 MiB.
+- `GRIST_API_KEY` — bearer API key created from Grist account settings.
+- `GRIST_ORG_ID` — organization identifier from the Grist URL; for `/o/docs/`,
+  use `docs`.
+- `GRIST_WORKSPACE_ID` — optional default workspace where CSV imports are saved.
 
 ## Structure
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -10,6 +11,7 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 import httpx
+import truststore
 
 from agent.errors import AlbertAPIError
 
@@ -154,7 +156,15 @@ class AlbertClient:
 
         tool_call_fragments: dict[int, dict[str, Any]] = {}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # httpx defaults to certifi, which does not include certificates
+            # installed in the Windows trust store (for example an internal
+            # administration proxy CA). Use the OS trust store consistently,
+            # just as the rest of the desktop application does.
+            ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                verify=ssl_context,
+            ) as client:
                 async with client.stream(
                     "POST", endpoint, headers=headers, json=payload
                 ) as response:

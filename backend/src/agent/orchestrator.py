@@ -14,6 +14,7 @@ from agent.specialists.drive import (
     DriveListItemsAgent,
     DriveReadImageAgent,
     DriveReadPdfAgent,
+    DriveUploadFileAgent,
 )
 from agent.specialists.local_files import (
     LocalFilesCreateFileAgent,
@@ -21,6 +22,7 @@ from agent.specialists.local_files import (
     LocalFilesReadImageAgent,
     LocalFilesReadPdfAgent,
 )
+from agent.specialists.grist import GristImportCsvAgent, GristListWorkspacesAgent
 from agent.errors import AgentError, AlbertAPIError, DriveAPIError
 from agent.events import AgentEvent
 from agent.registry import AgentRegistry
@@ -44,7 +46,12 @@ SYSTEM_PROMPT = (
     "complete totals. When folders remain unchecked, ask whether the user wants to "
     "focus on a specific folder or see everything found so far. Keep this explanation "
     "non-technical: never mention depth limits, tool calls, steps, or the backend. "
-    "Create a local or Drive file only when the user explicitly requests creation. "
+    "Create or upload a local or Drive file only when the user explicitly requests "
+    "that action. Use drive_create_file for generated text and drive_upload_file for "
+    "an existing local file whose original bytes must be preserved. "
+    "Import CSV data into Grist only when the user explicitly requests it. If a CSV "
+    "was just created, pass its returned local path or Drive item ID to the Grist "
+    "specialist instead of asking the user to repeat the data. "
     "Never imply that an existing file was overwritten or uploaded unless the "
     "specialist confirms success."
 )
@@ -236,6 +243,29 @@ def build_agent_registry() -> AgentRegistry:
                 settings.drive_session_id,
                 image_analyzer,
                 max_download_bytes=settings.image_max_read_bytes,
+            ),
+            DriveUploadFileAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                settings.local_files_root,
+                csrf_token=settings.drive_csrf_token,
+                upload_acl=settings.drive_upload_acl,
+                max_upload_bytes=settings.drive_max_upload_bytes,
+            ),
+            GristListWorkspacesAgent(
+                settings.grist_base_url,
+                settings.grist_api_key,
+                org_id=settings.grist_org_id,
+            ),
+            GristImportCsvAgent(
+                settings.grist_base_url,
+                settings.grist_api_key,
+                org_id=settings.grist_org_id,
+                workspace_id=settings.grist_workspace_id,
+                local_files_root=settings.local_files_root,
+                drive_base_url=settings.drive_base_url,
+                drive_session_id=settings.drive_session_id,
+                max_import_bytes=settings.grist_max_import_bytes,
             ),
             LocalFilesListItemsAgent(settings.local_files_root),
             LocalFilesCreateFileAgent(

@@ -28,6 +28,19 @@ class Settings:
     drive_max_download_bytes: int = int(
         os.environ.get("DRIVE_MAX_DOWNLOAD_BYTES", str(20 * 1024 * 1024))
     )
+    drive_max_upload_bytes: int = int(
+        os.environ.get("DRIVE_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))
+    )
+    grist_base_url: str = os.environ.get("GRIST_BASE_URL", "http://localhost:8484")
+    grist_api_key: str | None = os.environ.get("GRIST_API_KEY") or None
+    grist_org_id: str = os.environ.get("GRIST_ORG_ID", "current")
+    _grist_workspace_id = os.environ.get("GRIST_WORKSPACE_ID")
+    grist_workspace_id: int | None = (
+        int(_grist_workspace_id) if _grist_workspace_id else None
+    )
+    grist_max_import_bytes: int = int(
+        os.environ.get("GRIST_MAX_IMPORT_BYTES", str(10 * 1024 * 1024))
+    )
     pdf_max_text_characters: int = int(
         os.environ.get("PDF_MAX_TEXT_CHARACTERS", "80000")
     )

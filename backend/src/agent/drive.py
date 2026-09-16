@@ -10,6 +10,7 @@ from agent.specialists.drive import (
     DriveListItemsAgent,
     DriveReadImageAgent,
     DriveReadPdfAgent,
+    DriveUploadFileAgent,
 )
 from services.drive import (
     create_drive_file,
@@ -25,6 +26,7 @@ __all__ = [
     "DriveListItemsAgent",
     "DriveReadImageAgent",
     "DriveReadPdfAgent",
+    "DriveUploadFileAgent",
     "create_drive_file",
     "download_drive_file",
     "download_drive_pdf",

@@ -71,6 +71,21 @@ def get_drive_config(base_url: str, *, timeout: float = 10.0) -> dict[str, Any]:
     return _read_json(request, service="Drive", timeout=timeout)
 
 
+def resolve_drive_upload_acl(
+    base_url: str,
+    configured_acl: str | None,
+) -> str | None:
+    """Resolve the storage ACL override or use Drive's public configuration."""
+    upload_acl = configured_acl
+    if upload_acl is None:
+        config = get_drive_config(base_url)
+        discovered_acl = config.get("AWS_S3_UPLOAD_ACL")
+        if discovered_acl is not None and not isinstance(discovered_acl, str):
+            raise DriveAPIError("Drive returned an invalid upload configuration")
+        upload_acl = discovered_acl
+    return None if not upload_acl or upload_acl == "default" else upload_acl
+
+
 def list_drive_items(
     base_url: str,
     session_id: str,
