@@ -91,6 +91,15 @@ only for explicit file-creation requests. Existing files are never overwritten,
 directories are not created implicitly, and content size is bounded by
 `LOCAL_FILES_MAX_CREATE_BYTES`.
 
+`local_files_rename_file` renames one file within its current local directory.
+It preserves the existing extension when the requested new name omits one,
+never overwrites another file, and returns an updated local file artifact.
+
+`local_files_read_text` reads bounded CSV, TSV, TXT, Markdown, JSON, XML, YAML,
+and log files. It handles UTF-8 BOMs, UTF-16 BOMs, and Windows-1252 text, making
+content-aware operations such as “inspect this unknown file and rename it”
+possible entirely inside the local-files block.
+
 ## Creating Drive files
 
 `drive_create_file` uploads a new UTF-8 text file either to the top of My Files
@@ -111,11 +120,37 @@ preserved, including PDFs, images, archives, office documents, and arbitrary
 binary formats. Its source path is restricted to `LOCAL_FILES_ROOT`, it can
 target a Drive folder UUID, and uploads are bounded by `DRIVE_MAX_UPLOAD_BYTES`.
 
+`drive_read_text` reads bounded CSV and other text-based Drive files using the
+same BOM-aware encodings as local files. `drive_rename_file` updates a file's
+Drive title without downloading or re-uploading its bytes; it preserves the
+existing file type. Together they support “inspect this unknown Drive file and
+rename it descriptively” in one request.
+
+## Analyzing tabular data
+
+`data_analyze_table` accepts local or Drive `.csv` and `.ods` file artifacts,
+as well as Grist document artifacts. It calculates data-quality indicators,
+descriptive statistics, distributions, outliers, correlations, period changes,
+and date-based trends. It returns a bounded in-memory `data_analysis` artifact;
+it does not create files. `pdf_render_analysis` consumes that artifact and creates
+the comprehensive PDF report with charts, an executive summary, methodology, and
+limitations under `LOCAL_FILES_ROOT`. The resulting PDF artifact can then be
+passed directly to `drive_upload_file`.
+
+Analysis is bounded by `DATA_ANALYSIS_MAX_SOURCE_BYTES` and
+`DATA_ANALYSIS_MAX_ROWS`; rendered reports are bounded by `PDF_MAX_REPORT_BYTES`.
+The first usable Grist table or first ODS sheet is selected unless a Grist table
+ID is supplied.
+
 ## Creating and editing PDFs
 
 `pdf_create` writes a simple PDF (optional title plus plain-text body) below
 `LOCAL_FILES_ROOT`, using the same non-overwriting, no-implicit-directories
 rules as `local_files_create_file`.
+
+`pdf_render_analysis` is the report boundary for the analyst workflow. It reads
+the typed in-memory result from `data_analyze_table` and owns all PDF layout and
+file creation. This keeps the data-analysis block independent from PDF libraries.
 
 `pdf_apply_template` compiles an existing local `.typ` (Typst) file into a
 PDF. Layout - headers, footers, page numbers, styling - is authored directly

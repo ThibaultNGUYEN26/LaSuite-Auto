@@ -11,6 +11,7 @@ from typing import Any
 
 from agent.artifacts import Artifact
 from agent.errors import LocalFilesError
+from services.text_content import decode_text_content
 
 MAX_TRAVERSAL_DEPTH = 5
 EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$")
@@ -187,6 +188,43 @@ def read_local_file(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
     return data
 
 
+def read_local_text(
+    root: Path,
+    relative_path: str,
+    *,
+    max_bytes: int,
+    max_characters: int,
+) -> dict[str, Any]:
+    """Read a bounded text-based file with BOM-aware Unicode decoding."""
+    path = resolve_local_file(root, relative_path)
+    data = read_local_file(root, relative_path, max_bytes=max_bytes)
+    returned_content, used_encoding, total_characters, truncated = decode_text_content(
+        data,
+        filename=path.name,
+        max_characters=max_characters,
+        error_type=LocalFilesError,
+    )
+    relative = path.relative_to(_root_directory(root)).as_posix()
+    artifact = Artifact(
+        kind="file",
+        location="local",
+        reference=relative,
+        media_type=mimetypes.guess_type(path.name)[0] or "text/plain",
+        name=path.name,
+    )
+    return {
+        "status": "read",
+        "relative_path": relative,
+        "name": path.name,
+        "encoding": used_encoding,
+        "characters": total_characters,
+        "returned_characters": len(returned_content),
+        "truncated": truncated,
+        "content": returned_content,
+        "artifact": artifact.tool_value(),
+    }
+
+
 def read_local_pdf(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
     path = resolve_local_file(root, relative_path)
     if path.suffix.lower() != ".pdf":
@@ -274,5 +312,131 @@ def create_local_text_file(
         "relative_path": relative_path,
         "extension": target.suffix,
         "bytes_written": len(encoded),
+        "artifact": artifact.tool_value(),
+    }
+
+
+def create_local_binary_file(
+    root: Path,
+    *,
+    directory: str,
+    file_name: str,
+    extension: str,
+    data: bytes,
+    max_bytes: int,
+    media_type: str,
+) -> dict[str, Any]:
+    """Create one binary file without overwriting an existing path."""
+    if not isinstance(data, bytes):
+        raise LocalFilesError("data must be bytes")
+    if len(data) > max_bytes:
+        raise LocalFilesError(
+            f"File content exceeds the configured {max_bytes}-byte creation limit"
+        )
+    target_directory = resolve_local_directory(root, directory)
+    clean_name = file_name.strip()
+    clean_extension = extension.strip().removeprefix(".")
+    if (
+        not clean_name
+        or clean_name in {".", ".."}
+        or Path(clean_name).name != clean_name
+        or any(character in clean_name for character in '<>:"/\\|?*')
+        or clean_name.endswith((" ", "."))
+    ):
+        raise LocalFilesError("file_name contains invalid characters")
+    if clean_name.upper() in WINDOWS_RESERVED_NAMES:
+        raise LocalFilesError("file_name is reserved by Windows")
+    if not EXTENSION_PATTERN.fullmatch(clean_extension):
+        raise LocalFilesError("extension must contain only letters, numbers, _ or -")
+
+    target = (target_directory / f"{clean_name}.{clean_extension}").resolve()
+    resolved_root = _root_directory(root)
+    try:
+        relative_path = target.relative_to(resolved_root).as_posix()
+    except ValueError as exc:
+        raise LocalFilesError("Target path escapes the configured local-files root") from exc
+    try:
+        with target.open("xb") as file:
+            file.write(data)
+    except FileExistsError as exc:
+        raise LocalFilesError(
+            "A file with this name already exists. Choose another name."
+        ) from exc
+    except PermissionError as exc:
+        raise LocalFilesError("Permission denied") from exc
+    artifact = Artifact(
+        kind="file",
+        location="local",
+        reference=relative_path,
+        media_type=media_type,
+        name=target.name,
+    )
+    return {
+        "status": "created",
+        "relative_path": relative_path,
+        "extension": f".{clean_extension}",
+        "bytes_written": len(data),
+        "artifact": artifact.tool_value(),
+    }
+
+
+def rename_local_file(
+    root: Path,
+    *,
+    relative_path: str,
+    new_name: str,
+) -> dict[str, Any]:
+    """Rename one file in place without moving it or overwriting another file."""
+    source = resolve_local_file(root, relative_path)
+    if not isinstance(new_name, str):
+        raise LocalFilesError("new_name must be a string")
+    clean_name = new_name.strip()
+    if (
+        not clean_name
+        or clean_name in {".", ".."}
+        or Path(clean_name).name != clean_name
+        or any(character in clean_name for character in '<>:"/\\|?*')
+        or clean_name.endswith((" ", "."))
+    ):
+        raise LocalFilesError("new_name contains invalid characters")
+    if not Path(clean_name).suffix and source.suffix:
+        clean_name = f"{clean_name}{source.suffix}"
+    if Path(clean_name).stem.upper() in WINDOWS_RESERVED_NAMES:
+        raise LocalFilesError("new_name is reserved by Windows")
+
+    target = source.with_name(clean_name)
+    if target == source:
+        raise LocalFilesError("The file already has that name")
+    if target.exists():
+        raise LocalFilesError(
+            "A file with the requested name already exists in this directory"
+        )
+    resolved_root = _root_directory(root)
+    try:
+        old_relative_path = source.relative_to(resolved_root).as_posix()
+        new_relative_path = target.relative_to(resolved_root).as_posix()
+    except ValueError as exc:
+        raise LocalFilesError("Rename target escapes the configured local-files root") from exc
+    try:
+        source.rename(target)
+    except FileNotFoundError as exc:
+        raise LocalFilesError("File no longer exists") from exc
+    except PermissionError as exc:
+        raise LocalFilesError("Permission denied") from exc
+    except OSError as exc:
+        raise LocalFilesError(f"Could not rename file: {exc}") from exc
+
+    artifact = Artifact(
+        kind="file",
+        location="local",
+        reference=new_relative_path,
+        media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream",
+        name=target.name,
+    )
+    return {
+        "status": "renamed",
+        "old_relative_path": old_relative_path,
+        "relative_path": new_relative_path,
+        "name": target.name,
         "artifact": artifact.tool_value(),
     }

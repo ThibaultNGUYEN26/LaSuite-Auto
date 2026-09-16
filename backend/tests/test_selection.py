@@ -1,74 +1,147 @@
 import json
 import unittest
+from copy import deepcopy
+from typing import Any
 
-from agent.blocks import AgentBlock, BlockRegistry, CapabilityManifest
+from agent.base import DelegationContext, SpecialistAgent
+from agent.blocks import AgentBlock, BlockRegistry
 from agent.selection import select_blocks
 from schemas import ChatMessage
-from tests.test_orchestrator import FakeAlbertClient, FakePythonAgent
 
 
-def _registry() -> BlockRegistry:
-    block = AgentBlock(
-        name="code",
-        description="Execute bounded Python tasks.",
-        agents=(FakePythonAgent(),),
-        capabilities=(
-            CapabilityManifest(name="python_execute", description="Run Python."),
-        ),
-    )
-    return BlockRegistry([block])
+class ExampleAgent(SpecialistAgent):
+    description = "Example capability."
+    parameters = {"type": "object", "properties": {}}
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def execute(self, arguments: dict, context: DelegationContext) -> dict:
+        return {"status": "ok"}
 
 
-async def _select(tool_calls):
-    client = FakeAlbertClient([{"tool_calls": tool_calls}])
-    return await select_blocks(
-        client,
-        model="fake-model",
-        conversation=[ChatMessage(role="user", content="do something")],
-        blocks=_registry(),
-    )
+class FakeSelectionClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.requests = []
+
+    async def chat_completion_stream(self, **request):
+        self.requests.append(deepcopy(request))
+        response = next(self.responses)
+        if response.get("content"):
+            yield {"type": "content", "delta": response["content"]}
+        yield {"type": "done", "tool_calls": response.get("tool_calls") or []}
 
 
-def _call(arguments: str, name: str = "select_capability_blocks"):
-    return [{"function": {"name": name, "arguments": arguments}}]
+def selection_call(names: Any) -> dict:
+    return {
+        "id": "selection",
+        "type": "function",
+        "function": {
+            "name": "select_capability_blocks",
+            "arguments": json.dumps({"blocks": names}),
+        },
+    }
 
 
-class SelectBlocksTests(unittest.IsolatedAsyncioTestCase):
-    async def test_accepts_a_normal_list_selection(self):
-        result = await _select(_call(json.dumps({"blocks": ["code"]})))
-        self.assertEqual(result, ("code",))
-
-    async def test_accepts_a_bare_string_instead_of_a_single_item_list(self):
-        result = await _select(_call(json.dumps({"blocks": "code"})))
-        self.assertEqual(result, ("code",))
-
-    async def test_explicit_empty_list_means_no_blocks_needed(self):
-        result = await _select(_call(json.dumps({"blocks": []})))
-        self.assertEqual(result, ())
-
-    async def test_drops_unknown_block_names_and_keeps_valid_ones(self):
-        result = await _select(
-            _call(json.dumps({"blocks": ["code", "not-a-real-block"]}))
+class BlockSelectionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="local_files",
+                    description="Discover local datasets.",
+                    agents=(ExampleAgent("list_local"),),
+                ),
+                AgentBlock(
+                    name="data_analysis",
+                    description="Analyze trends and evolution in tabular data.",
+                    agents=(ExampleAgent("analyze_data"),),
+                ),
+            ]
         )
-        self.assertEqual(result, ("code",))
 
-    async def test_fails_open_when_only_unknown_blocks_are_returned(self):
-        result = await _select(_call(json.dumps({"blocks": ["not-a-real-block"]})))
-        self.assertEqual(result, ("code",))
-
-    async def test_fails_open_on_invalid_json(self):
-        result = await _select(_call("not json"))
-        self.assertEqual(result, ("code",))
-
-    async def test_fails_open_when_the_model_calls_the_wrong_function(self):
-        result = await _select(
-            _call(json.dumps({"task": "x"}), name="python_execute")
+    async def test_accepts_text_json_when_model_ignores_forced_tool_call(self):
+        client = FakeSelectionClient(
+            [{"content": '{"blocks":["local_files","data_analysis"]}'}]
         )
-        self.assertEqual(result, ("code",))
 
-    async def test_fails_open_when_no_tool_call_is_returned(self):
-        result = await _select([])
-        self.assertEqual(result, ("code",))
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[
+                ChatMessage(
+                    role="user",
+                    content="Dis-moi l'évolution de la surface pastorale.",
+                )
+            ],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ("local_files", "data_analysis"))
+        self.assertEqual(len(client.requests), 1)
+
+    async def test_accepts_a_bare_string_for_one_block(self):
+        client = FakeSelectionClient(
+            [{"tool_calls": [selection_call("data_analysis")]}]
+        )
+
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[ChatMessage(role="user", content="Show the trend")],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ("data_analysis",))
+
+    async def test_retries_as_plain_json_when_tool_selection_is_missing(self):
+        client = FakeSelectionClient(
+            [
+                {},
+                {"content": '{"blocks":["local_files","data_analysis"]}'},
+            ]
+        )
+
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[ChatMessage(role="user", content="Analyze my local CSV")],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ("local_files", "data_analysis"))
+        self.assertEqual(client.requests[1]["tools"], [])
+        self.assertIn(
+            "intended outcome in any language",
+            client.requests[0]["messages"][0]["content"],
+        )
+
+    async def test_missing_selection_no_longer_raises_backend_error(self):
+        client = FakeSelectionClient([{}, {}])
+
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[ChatMessage(role="user", content="Help me")],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ())
+
+    async def test_still_prefers_a_valid_tool_call(self):
+        client = FakeSelectionClient(
+            [{"tool_calls": [selection_call(["data_analysis"])]}]
+        )
+
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[ChatMessage(role="user", content="Show the trend")],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ("data_analysis",))
 
 
 if __name__ == "__main__":

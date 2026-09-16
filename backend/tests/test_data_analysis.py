@@ -1,0 +1,195 @@
+import io
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+from agent.artifact_store import MemoryArtifactStore
+from agent.artifacts import Artifact
+from agent.base import DelegationContext
+from agent.specialists.data_analysis import AnalyzeTableAgent
+from services.grist import read_grist_table
+from services.tabular_analysis import analyze_table, parse_ods_data
+
+
+class DataAnalysisAgentTests(unittest.TestCase):
+    def test_analyzes_local_csv_and_returns_an_in_memory_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "sales.csv").write_text(
+                "date,revenue,orders,region\n"
+                "2026-01-01,100,4,North\n"
+                "2026-02-01,130,5,South\n"
+                "2026-03-01,180,8,North\n",
+                encoding="utf-8",
+            )
+            store = MemoryArtifactStore()
+            agent = AnalyzeTableAgent(
+                local_files_root=root,
+                drive_base_url="http://drive:8071",
+                drive_session_id="session",
+                grist_base_url="http://grist:8484",
+                grist_api_key="key",
+                artifact_store=store,
+            )
+
+            result = agent.execute(
+                {
+                    "artifact": {
+                        "kind": "file",
+                        "location": "local",
+                        "reference": "sales.csv",
+                        "media_type": "text/csv",
+                        "name": "sales.csv",
+                        "metadata": {},
+                    },
+                    "question": "What is the revenue tendency over time?",
+                    "date_column": "date",
+                    "value_columns": ["revenue"],
+                },
+                DelegationContext(conversation=()),
+            )
+
+            self.assertEqual(result["status"], "analyzed")
+            self.assertEqual(result["rows_analyzed"], 3)
+            self.assertEqual(result["trends"][0]["direction"], "upward")
+            self.assertGreater(result["trends"][0]["percentage_change"], 79)
+            self.assertGreater(result["trends"][0]["r_squared"], 0.9)
+            artifact = Artifact.model_validate(result["artifact"])
+            self.assertEqual(artifact.kind, "data_analysis")
+            self.assertEqual(artifact.location, "memory")
+            self.assertEqual(
+                artifact.media_type,
+                "application/vnd.lasuite.data-analysis+json",
+            )
+            payload = store.get(artifact, expected_kind="data_analysis")
+            self.assertEqual(payload["source_name"], "sales.csv")
+            self.assertFalse(any(root.glob("*.pdf")))
+            self.assertIn("pdf_render_analysis", result["next_action"])
+
+    def test_analysis_includes_quality_outliers_and_period_dynamics(self):
+        analysis = analyze_table(
+            ["date", "revenue", "region"],
+            [
+                ["2025-01-01", "10", "North"],
+                ["2025-02-01", "11", "North"],
+                ["2025-03-01", "12", "South"],
+                ["2025-04-01", "13", "North"],
+                ["2025-05-01", "14", "North"],
+                ["2025-06-01", "15", "South"],
+                ["2025-07-01", "100", "North"],
+                ["2025-01-01", "10", "North"],
+            ],
+            question="Explain revenue evolution",
+            requested_date_column="date",
+            requested_value_columns=["revenue"],
+        )
+
+        self.assertEqual(analysis["quality"]["duplicate_rows"], 1)
+        self.assertEqual(analysis["numeric_statistics"][0]["outlier_count"], 1)
+        trend = analysis["trends"][0]
+        self.assertIn("r_squared", trend)
+        self.assertIn("annualized_change", trend)
+        self.assertIn("largest_increase", trend)
+        self.assertIn("period_change_volatility", trend)
+        self.assertTrue(analysis["findings"])
+        self.assertTrue(analysis["limitations"])
+
+    def test_report_arguments_are_not_part_of_the_analyst_contract(self):
+        properties = AnalyzeTableAgent.parameters["properties"]
+
+        self.assertNotIn("report_format", properties)
+        self.assertNotIn("report_name", properties)
+        self.assertNotIn("output_directory", properties)
+
+    def test_preserves_unicode_in_the_analysis_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "activité.csv").write_text(
+                "date,surface\n"
+                "2024-01-01,42.5\n"
+                "2025-01-01,48.7\n",
+                encoding="utf-8-sig",
+            )
+            store = MemoryArtifactStore()
+            agent = AnalyzeTableAgent(
+                local_files_root=root,
+                drive_base_url="http://drive:8071",
+                drive_session_id="session",
+                grist_base_url="http://grist:8484",
+                grist_api_key="key",
+                artifact_store=store,
+            )
+
+            result = agent.execute(
+                {
+                    "artifact": {
+                        "kind": "file",
+                        "location": "local",
+                        "reference": "activité.csv",
+                        "media_type": "text/csv",
+                        "name": "activité.csv",
+                        "metadata": {},
+                    },
+                    "question": "Quelle est l'évolution de la surface pâturale ?",
+                },
+                DelegationContext(conversation=()),
+            )
+
+            artifact = Artifact.model_validate(result["artifact"])
+            payload = store.get(artifact, expected_kind="data_analysis")
+            self.assertIn("évolution", payload["analysis"]["question"])
+            self.assertEqual(payload["source_name"], "activité.csv")
+
+    def test_parses_first_sheet_from_an_ods_spreadsheet(self):
+        content_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+ xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+ <office:body><office:spreadsheet><table:table table:name="Sheet1">
+  <table:table-row><table:table-cell><text:p>Date</text:p></table:table-cell>
+   <table:table-cell><text:p>Value</text:p></table:table-cell></table:table-row>
+  <table:table-row><table:table-cell><text:p>2026-01-01</text:p></table:table-cell>
+   <table:table-cell office:value-type="float" office:value="42"/></table:table-row>
+ </table:table></office:spreadsheet></office:body>
+</office:document-content>"""
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("content.xml", content_xml)
+
+        headers, rows, truncated = parse_ods_data(buffer.getvalue(), max_rows=100)
+
+        self.assertEqual(headers, ["Date", "Value"])
+        self.assertEqual(rows, [["2026-01-01", "42"]])
+        self.assertFalse(truncated)
+
+
+class GristTableReadTests(unittest.TestCase):
+    @patch("services.grist._read_json")
+    def test_reads_the_first_data_table_as_rows(self, read_json):
+        read_json.side_effect = [
+            {"tables": [{"id": "GristHidden"}, {"id": "Sales"}]},
+            {
+                "records": [
+                    {"id": 1, "fields": {"Date": "2026-01-01", "Revenue": 100}},
+                    {"id": 2, "fields": {"Date": "2026-02-01", "Revenue": 125}},
+                ]
+            },
+        ]
+
+        headers, rows, table_id, truncated = read_grist_table(
+            "http://grist:8484",
+            "secret",
+            document_id="doc-1",
+        )
+
+        self.assertEqual(headers, ["Date", "Revenue"])
+        self.assertEqual(rows, [["2026-01-01", "100"], ["2026-02-01", "125"]])
+        self.assertEqual(table_id, "Sales")
+        self.assertFalse(truncated)
+
+
+if __name__ == "__main__":
+    unittest.main()

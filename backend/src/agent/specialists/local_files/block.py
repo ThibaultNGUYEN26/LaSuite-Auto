@@ -12,6 +12,8 @@ from agent.specialists.local_files import (
     LocalFilesListItemsAgent,
     LocalFilesReadImageAgent,
     LocalFilesReadPdfAgent,
+    LocalFilesReadTextAgent,
+    LocalFilesRenameFileAgent,
 )
 from config import settings
 from services.image import AlbertImageAnalyzer
@@ -25,7 +27,11 @@ def create_block() -> AgentBlock:
     )
     return AgentBlock(
         name="local_files",
-        description="Read and create files below the configured local root.",
+        description=(
+            "Discover, read, create, and rename files below the configured local root. "
+            "Use it to locate an existing dataset by filename or subject before "
+            "another block analyzes or processes that file."
+        ),
         required_config=(ConfigRequirement("LOCAL_FILES_ROOT", required=True),),
         permissions=("local.read", "local.write"),
         capabilities=(
@@ -44,11 +50,27 @@ def create_block() -> AgentBlock:
                 produces=(ArtifactContract("file"),),
             ),
             CapabilityManifest(
+                "local_files_rename_file",
+                "Rename a local file in its current directory without overwriting.",
+                side_effect="local_write",
+                permissions=("local.read", "local.write"),
+                accepts=(ArtifactContract("file"),),
+                produces=(ArtifactContract("file"),),
+            ),
+            CapabilityManifest(
                 "local_files_read_pdf",
                 "Read selectable text from a local PDF.",
                 side_effect="local_read",
                 permissions=("local.read",),
                 accepts=(ArtifactContract("file", ("application/pdf",)),),
+                produces=(ArtifactContract("text", ("text/plain",)),),
+            ),
+            CapabilityManifest(
+                "local_files_read_text",
+                "Read CSV and other text-based local files.",
+                side_effect="local_read",
+                permissions=("local.read",),
+                accepts=(ArtifactContract("file", ("text/*", "application/json")),),
                 produces=(ArtifactContract("text", ("text/plain",)),),
             ),
             CapabilityManifest(
@@ -73,10 +95,16 @@ def create_block() -> AgentBlock:
                 settings.local_files_root,
                 max_create_bytes=settings.local_files_max_create_bytes,
             ),
+            LocalFilesRenameFileAgent(settings.local_files_root),
             LocalFilesReadPdfAgent(
                 settings.local_files_root,
                 max_read_bytes=settings.local_files_max_read_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
+            ),
+            LocalFilesReadTextAgent(
+                settings.local_files_root,
+                max_read_bytes=settings.local_files_max_read_bytes,
+                max_text_characters=settings.text_max_characters,
             ),
             LocalFilesReadImageAgent(
                 settings.local_files_root,

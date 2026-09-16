@@ -14,6 +14,8 @@ from agent.specialists.drive import (
     DriveListItemsAgent,
     DriveReadImageAgent,
     DriveReadPdfAgent,
+    DriveReadTextAgent,
+    DriveRenameFileAgent,
     DriveUploadFileAgent,
 )
 from config import settings
@@ -28,7 +30,7 @@ def create_block() -> AgentBlock:
     )
     return AgentBlock(
         name="drive",
-        description="Read and write files in La Suite Drive.",
+        description="Discover, read, create, upload, and rename files in La Suite Drive.",
         required_config=(
             ConfigRequirement("DRIVE_BASE_URL", required=True),
             ConfigRequirement("DRIVE_SESSION_ID", required=True, secret=True),
@@ -70,6 +72,22 @@ def create_block() -> AgentBlock:
                 permissions=("drive.read",),
                 accepts=(ArtifactContract("file", ("application/pdf",)),),
                 produces=(ArtifactContract("text", ("text/plain",)),),
+            ),
+            CapabilityManifest(
+                "drive_read_text",
+                "Read CSV and other text-based Drive files.",
+                side_effect="external_read",
+                permissions=("drive.read",),
+                accepts=(ArtifactContract("file", ("text/*", "application/json")),),
+                produces=(ArtifactContract("text", ("text/plain",)),),
+            ),
+            CapabilityManifest(
+                "drive_rename_file",
+                "Rename a Drive file without changing its contents.",
+                side_effect="external_write",
+                permissions=("drive.read", "drive.write"),
+                accepts=(ArtifactContract("file"),),
+                produces=(ArtifactContract("file"),),
             ),
             CapabilityManifest(
                 "drive_read_image",
@@ -121,6 +139,17 @@ def create_block() -> AgentBlock:
                 settings.drive_session_id,
                 max_download_bytes=settings.drive_max_download_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
+            ),
+            DriveReadTextAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                max_download_bytes=settings.drive_max_download_bytes,
+                max_text_characters=settings.text_max_characters,
+            ),
+            DriveRenameFileAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                csrf_token=settings.drive_csrf_token,
             ),
             DriveReadImageAgent(
                 settings.drive_base_url,
