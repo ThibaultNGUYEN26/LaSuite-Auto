@@ -32,6 +32,9 @@ class Settings:
     drive_max_create_bytes: int = int(
         os.environ.get("DRIVE_MAX_CREATE_BYTES", str(1024 * 1024))
     )
+    drive_max_batch_files: int = int(
+        os.environ.get("DRIVE_MAX_BATCH_FILES", "50")
+    )
     drive_max_download_bytes: int = int(
         os.environ.get("DRIVE_MAX_DOWNLOAD_BYTES", str(20 * 1024 * 1024))
     )

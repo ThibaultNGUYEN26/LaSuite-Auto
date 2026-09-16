@@ -31,8 +31,15 @@ async def select_blocks(
     model: str,
     conversation: list[ChatMessage],
     blocks: BlockRegistry,
+    execution_context: list[dict[str, Any]] | None = None,
+    currently_selected: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
-    """Choose blocks from compact manifests before exposing detailed tool schemas."""
+    """Choose blocks from compact manifests before exposing detailed tool schemas.
+
+    The selector may be called again after a capability has run. This lets the
+    orchestrator discover the next block from a produced artifact without making
+    every installed tool visible to the planning model.
+    """
     if not blocks.names:
         return ()
     catalog = blocks.catalog()
@@ -60,19 +67,42 @@ async def select_blocks(
             },
         }
     ]
-    messages = [
+    selection_instructions = (
+        "You select relevant capability blocks for another reasoning agent. "
+        "Choose all blocks that may participate in the request, including "
+        "sources, transformations, and destinations in a multi-step task. "
+        "When execution progress is supplied, choose every block that may still "
+        "be needed to finish the original request. Do not execute the task. "
+        "Here is the compact block catalog:\n"
+        + json.dumps(catalog, ensure_ascii=False)
+    )
+    if currently_selected:
+        selection_instructions += (
+            "\nBlocks already available to the reasoning agent: "
+            + json.dumps(currently_selected, ensure_ascii=False)
+        )
+
+    messages: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": (
-                "You select relevant capability blocks for another reasoning agent. "
-                "Choose all blocks that may participate in the request, including "
-                "sources and destinations in a multi-step task. Do not execute the "
-                "task. Here is the compact block catalog:\n"
-                + json.dumps(catalog, ensure_ascii=False)
-            ),
+            "content": selection_instructions,
         },
         *(message.model_dump() for message in conversation),
     ]
+    if execution_context:
+        progress = json.dumps(execution_context[-8:], ensure_ascii=False)
+        if len(progress) > 12_000:
+            progress = progress[:12_000] + "…"
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Execution progress from the current request follows. Use it "
+                    "to identify the blocks needed for the remaining work:\n"
+                    + progress
+                ),
+            }
+        )
     tool_calls: list[dict[str, Any]] = []
     async for chunk in client.chat_completion_stream(
         model=model,

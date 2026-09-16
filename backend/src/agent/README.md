@@ -96,6 +96,11 @@ The storage ACL is read from Drive automatically, unless `DRIVE_UPLOAD_ACL` over
 The specialist creates text content with extensions such as `.txt`, `.md`, `.csv`,
 or `.json`; changing an extension does not generate a binary PDF or DOCX document.
 
+`drive_create_files` creates several text files in one bounded batch, so a request
+for many files does not consume one orchestration round per file. The entire batch
+is validated before the first upload, and the result reports each success and
+failure. `DRIVE_MAX_BATCH_FILES` controls the maximum number of files per batch.
+
 `drive_upload_file` handles existing local files whose exact bytes must be
 preserved, including PDFs, images, archives, office documents, and arbitrary
 binary formats. Its source path is restricted to `LOCAL_FILES_ROOT`, it can

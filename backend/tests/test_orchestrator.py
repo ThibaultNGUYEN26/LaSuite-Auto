@@ -58,6 +58,47 @@ class FakePythonAgent(SpecialistAgent):
         return {"status": "completed", "files_changed": 2}
 
 
+class FakeCreateCsvAgent(SpecialistAgent):
+    name = "local_create_csv"
+    description = "Create a CSV file on the local computer."
+    parameters = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+
+    def execute(self, arguments: dict, context: DelegationContext) -> dict:
+        return {
+            "status": "created",
+            "artifact": {
+                "kind": "file",
+                "location": "local",
+                "reference": arguments["path"],
+                "media_type": "text/csv",
+                "name": "sales.csv",
+            },
+        }
+
+
+class FakeGristImportAgent(SpecialistAgent):
+    name = "grist_import_csv"
+    description = "Import a CSV artifact into Grist."
+    parameters = {
+        "type": "object",
+        "properties": {"artifact": {"type": "object"}},
+        "required": ["artifact"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, arguments: dict, context: DelegationContext) -> dict:
+        self.calls.append(arguments)
+        return {"status": "imported", "document_id": "grist-doc-1"}
+
+
 async def collect_events(agent, conversation):
     events = []
     async for event in agent.run_stream(conversation):
@@ -76,6 +117,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             {
                 "drive_get_config",
                 "drive_create_file",
+                "drive_create_files",
                 "drive_list_items",
                 "drive_read_image",
                 "drive_read_pdf",
@@ -268,6 +310,136 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             albert.requests[1]["messages"][0]["content"],
         )
         self.assertEqual(events[-1].data, {"content": "I can handle that."})
+
+    async def test_expands_blocks_after_an_artifact_for_a_cross_block_request(self):
+        create_csv = FakeCreateCsvAgent()
+        import_csv = FakeGristImportAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="local_files",
+                    description="Create and access local files.",
+                    agents=(create_csv,),
+                ),
+                AgentBlock(
+                    name="grist",
+                    description="Import tabular data into Grist.",
+                    agents=(import_csv,),
+                ),
+            ]
+        )
+        artifact = {
+            "kind": "file",
+            "location": "local",
+            "reference": "exports/sales.csv",
+            "media_type": "text/csv",
+            "name": "sales.csv",
+        }
+        albert = FakeAlbertClient(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "id": "select-local",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps(
+                                    {"blocks": ["local_files"]}
+                                ),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "create-csv",
+                            "type": "function",
+                            "function": {
+                                "name": "local_create_csv",
+                                "arguments": json.dumps(
+                                    {"path": "exports/sales.csv"}
+                                ),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "select-grist",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps({"blocks": ["grist"]}),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "import-csv",
+                            "type": "function",
+                            "function": {
+                                "name": "grist_import_csv",
+                                "arguments": json.dumps({"artifact": artifact}),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "selection-complete",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps({"blocks": []}),
+                            },
+                        }
+                    ]
+                },
+                {"content": "I created the CSV and imported it into Grist."},
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            block_registry=blocks,
+        )
+
+        events = await collect_events(
+            agent,
+            [
+                ChatMessage(
+                    role="user",
+                    content="Create sales.csv locally and put it into Grist.",
+                )
+            ],
+        )
+
+        self.assertEqual(
+            events[-1].data,
+            {"content": "I created the CSV and imported it into Grist."},
+        )
+        self.assertEqual(import_csv.calls, [{"artifact": artifact}])
+        first_planning_tools = {
+            tool["function"]["name"] for tool in albert.requests[1]["tools"]
+        }
+        expanded_planning_tools = {
+            tool["function"]["name"] for tool in albert.requests[3]["tools"]
+        }
+        self.assertEqual(first_planning_tools, {"local_create_csv"})
+        self.assertEqual(
+            expanded_planning_tools,
+            {"local_create_csv", "grist_import_csv"},
+        )
+        self.assertIn(
+            '"media_type": "text/csv"',
+            albert.requests[2]["messages"][-1]["content"],
+        )
 
     async def test_step_limit_returns_a_partial_answer_instead_of_an_error(self):
         python_agent = FakePythonAgent()

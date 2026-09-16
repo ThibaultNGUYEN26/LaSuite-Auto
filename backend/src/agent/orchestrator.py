@@ -76,6 +76,8 @@ class OrchestratorAgent:
     ) -> AsyncIterator[AgentEvent]:
         active_registry = self.registry
         planning_prompt = SYSTEM_PROMPT
+        selected_blocks: tuple[str, ...] = ()
+        execution_context: list[dict[str, Any]] = []
         if self.block_registry is not None:
             selected_blocks = await select_blocks(
                 self.albert,
@@ -171,6 +173,34 @@ class OrchestratorAgent:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                 )
+                execution_context.append({"capability": name, "result": result})
+
+            if self.block_registry is not None and step < self.max_steps:
+                next_blocks = await select_blocks(
+                    self.albert,
+                    model=self.model,
+                    conversation=conversation,
+                    blocks=self.block_registry,
+                    execution_context=execution_context,
+                    currently_selected=selected_blocks,
+                )
+                expanded_blocks = tuple(
+                    dict.fromkeys((*selected_blocks, *next_blocks))
+                )
+                if expanded_blocks != selected_blocks:
+                    selected_blocks = expanded_blocks
+                    active_registry = self.block_registry.agent_registry(
+                        selected_blocks
+                    )
+                    planning_prompt = SYSTEM_PROMPT + (
+                        "\n\nSelected capability manifests and known workflow "
+                        "routes:\n"
+                        + json.dumps(
+                            self.block_registry.catalog(selected_blocks),
+                            ensure_ascii=False,
+                        )
+                    )
+                    messages[0]["content"] = planning_prompt
 
         synthesis_step = self.max_steps + 1
         yield AgentEvent(

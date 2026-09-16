@@ -10,6 +10,7 @@ from agent.blocks import (
 from agent.specialists.drive import (
     DriveConfigAgent,
     DriveCreateFileAgent,
+    DriveCreateFilesAgent,
     DriveListItemsAgent,
     DriveReadImageAgent,
     DriveReadPdfAgent,
@@ -47,6 +48,13 @@ def create_block() -> AgentBlock:
                 side_effect="external_write",
                 permissions=("drive.write",),
                 produces=(ArtifactContract("file", description="Drive file"),),
+            ),
+            CapabilityManifest(
+                "drive_create_files",
+                "Create multiple text files in Drive in one bounded batch.",
+                side_effect="external_write",
+                permissions=("drive.write",),
+                produces=(ArtifactContract("file", description="Drive files"),),
             ),
             CapabilityManifest(
                 "drive_list_items",
@@ -95,6 +103,14 @@ def create_block() -> AgentBlock:
                 csrf_token=settings.drive_csrf_token,
                 upload_acl=settings.drive_upload_acl,
                 max_create_bytes=settings.drive_max_create_bytes,
+            ),
+            DriveCreateFilesAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                csrf_token=settings.drive_csrf_token,
+                upload_acl=settings.drive_upload_acl,
+                max_create_bytes=settings.drive_max_create_bytes,
+                max_batch_files=settings.drive_max_batch_files,
             ),
             DriveListItemsAgent(
                 settings.drive_base_url,

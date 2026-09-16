@@ -112,6 +112,13 @@ The first model pass sees only compact block manifests. It selects every block
 needed for the source, transformation, and destination of the request. The
 planning pass then sees only the selected blocks' detailed tool schemas.
 
+Selection is expandable during a request. After a capability returns a result,
+the selector sees a compact execution summary and may add another block for the
+remaining work. Previously selected blocks remain available. For example, a
+local file creation can produce a CSV artifact and make the Grist block available
+for the next step, even when the initial selection only chose local files. This
+keeps cross-block plans agentic without exposing every installed tool at once.
+
 `WorkflowManifest` declares a dependable known sequence. It is routing metadata,
 not a hard-coded replacement for reasoning: the orchestrator may still construct
 a different plan when the request requires one.

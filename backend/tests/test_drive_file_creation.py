@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from agent.base import DelegationContext
 from agent.errors import DriveAPIError
-from agent.specialists.drive import DriveCreateFileAgent
+from agent.specialists.drive import DriveCreateFileAgent, DriveCreateFilesAgent
 from services.drive import create_drive_file
 
 
@@ -119,6 +119,121 @@ class DriveFileCreationTests(unittest.TestCase):
                 {"file_name": "../notes", "extension": "txt", "content": "no"},
                 DelegationContext(conversation=()),
             )
+
+    @patch("agent.specialists.drive.create_file.create_drive_file")
+    def test_batch_agent_creates_every_file_in_one_call(self, create_file):
+        create_file.side_effect = [
+            {
+                "status": "created",
+                "filename": "random_1.txt",
+                "artifact": {"reference": "item-1"},
+            },
+            {
+                "status": "created",
+                "filename": "random_2.txt",
+                "artifact": {"reference": "item-2"},
+            },
+        ]
+        agent = DriveCreateFilesAgent(
+            "http://drive:8071",
+            "session",
+            upload_acl="default",
+        )
+
+        result = agent.execute(
+            {
+                "files": [
+                    {
+                        "file_name": "random_1",
+                        "extension": "txt",
+                        "content": "first",
+                    },
+                    {
+                        "file_name": "random_2",
+                        "extension": ".txt",
+                        "content": "second",
+                    },
+                ]
+            },
+            DelegationContext(conversation=()),
+        )
+
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["requested_count"], 2)
+        self.assertEqual(result["created_count"], 2)
+        self.assertTrue(result["complete"])
+        self.assertEqual(
+            result["artifacts"],
+            [{"reference": "item-1"}, {"reference": "item-2"}],
+        )
+        self.assertEqual(create_file.call_count, 2)
+        self.assertEqual(
+            create_file.call_args_list[0].kwargs["filename"], "random_1.txt"
+        )
+        self.assertEqual(create_file.call_args_list[1].kwargs["data"], b"second")
+
+    @patch("agent.specialists.drive.create_file.create_drive_file")
+    def test_batch_agent_validates_every_file_before_creating_anything(
+        self, create_file
+    ):
+        agent = DriveCreateFilesAgent(
+            "http://drive:8071",
+            "session",
+            upload_acl="default",
+        )
+
+        with self.assertRaisesRegex(DriveAPIError, "File 2 is invalid"):
+            agent.execute(
+                {
+                    "files": [
+                        {
+                            "file_name": "valid",
+                            "extension": "txt",
+                            "content": "safe",
+                        },
+                        {
+                            "file_name": "../invalid",
+                            "extension": "txt",
+                            "content": "unsafe",
+                        },
+                    ]
+                },
+                DelegationContext(conversation=()),
+            )
+
+        create_file.assert_not_called()
+
+    @patch("agent.specialists.drive.create_file.create_drive_file")
+    def test_batch_agent_reports_partial_failures(self, create_file):
+        create_file.side_effect = [
+            {
+                "status": "created",
+                "filename": "first.txt",
+                "artifact": {"reference": "item-1"},
+            },
+            DriveAPIError("Drive storage was unavailable"),
+        ]
+        agent = DriveCreateFilesAgent(
+            "http://drive:8071",
+            "session",
+            upload_acl="default",
+        )
+
+        result = agent.execute(
+            {
+                "files": [
+                    {"file_name": "first", "extension": "txt", "content": "1"},
+                    {"file_name": "second", "extension": "txt", "content": "2"},
+                ]
+            },
+            DelegationContext(conversation=()),
+        )
+
+        self.assertEqual(result["status"], "partially_created")
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["created_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["failures"][0]["filename"], "second.txt")
 
 
 if __name__ == "__main__":
