@@ -33,6 +33,11 @@ agent/
       list_items.py
       read_image.py
       read_pdf.py
+    pdf/
+      block.py
+      apply_template.py
+      create_pdf.py
+      run_script.py
 services/
   drive.py
   image.py
@@ -125,14 +130,40 @@ rename it descriptively” in one request.
 
 `data_analyze_table` accepts local or Drive `.csv` and `.ods` file artifacts,
 as well as Grist document artifacts. It calculates data-quality indicators,
-descriptive statistics, correlations, and date-based trends, then creates a PDF
-report with charts under `LOCAL_FILES_ROOT` by default. HTML remains available
-when explicitly requested. The resulting artifact can be passed directly to
-`drive_upload_file`.
+descriptive statistics, distributions, outliers, correlations, period changes,
+and date-based trends. It creates a comprehensive PDF report with charts, an
+executive summary, methodology, and limitations under `LOCAL_FILES_ROOT`. The
+resulting artifact can be passed directly to `drive_upload_file`.
 
 Analysis is bounded by `DATA_ANALYSIS_MAX_SOURCE_BYTES`,
 `DATA_ANALYSIS_MAX_REPORT_BYTES`, and `DATA_ANALYSIS_MAX_ROWS`. The first usable
 Grist table or first ODS sheet is selected unless a Grist table ID is supplied.
+
+## Creating and editing PDFs
+
+`pdf_create` writes a simple PDF (optional title plus plain-text body) below
+`LOCAL_FILES_ROOT`, using the same non-overwriting, no-implicit-directories
+rules as `local_files_create_file`.
+
+`pdf_apply_template` compiles an existing local `.typ` (Typst) file into a
+PDF. Layout - headers, footers, page numbers, styling - is authored directly
+in the template using Typst's own markup, so the tool itself takes nothing
+beyond the source path and destination.
+
+`pdf_run_script` covers everything the two structured tools cannot express -
+merging, splitting, rotating, watermarking, form filling, and similar edits.
+It runs a short Python script the same way `run_python` does, except its
+working directory is `LOCAL_FILES_ROOT` and the backend's own environment
+already has `pypdf` (editing existing PDFs) and `fpdf` (fpdf2, building PDFs
+from scratch) installed, so the model does not need to install anything.
+`run_python`/`run_python_file` themselves stay PDF-library-free and point the
+model at the pdf block's tools instead, so PDF work always ends up shaped by
+those tools rather than one-off scripts. As with `run_python`, the script only
+has whatever the local filesystem gives it; it does not see the conversation.
+
+`PDF_MAX_CREATE_CHARACTERS` bounds `pdf_create`'s body text and
+`PDF_MAX_TEMPLATE_SOURCE_BYTES` bounds the Typst source `pdf_apply_template`
+will compile.
 
 ## Importing CSV files into Grist
 

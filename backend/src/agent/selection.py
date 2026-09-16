@@ -16,6 +16,8 @@ SELECTION_FUNCTION = "select_capability_blocks"
 def _validated_selection(
     value: Any, available: tuple[str, ...]
 ) -> tuple[str, ...] | None:
+    if isinstance(value, str):
+        value = [value]
     if not isinstance(value, list) or not all(
         isinstance(name, str) for name in value
     ):

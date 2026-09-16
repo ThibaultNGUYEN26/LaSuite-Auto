@@ -29,5 +29,9 @@ class DataAnalysisError(SpecialistAgentError):
     """Tabular data could not be read or analyzed safely."""
 
 
+class PdfError(SpecialistAgentError):
+    """A PDF creation or editing operation could not be completed safely."""
+
+
 class AlbertAPIError(AgentError):
     """Albert could not return a usable response."""

@@ -86,9 +86,20 @@
 }
 
 .specialization-row__title {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
   font-size: var(--c--globals--font--sizes--md);
   font-weight: 500;
   color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.specialization-row[data-teaser] {
+  opacity: 0.7;
+}
+
+.specialization-row[data-teaser] .specialization-row__action {
+  opacity: 1;
 }
 
 .specialization-row__subtitle {

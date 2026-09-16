@@ -1,6 +1,7 @@
 import json
 import unittest
 from copy import deepcopy
+from typing import Any
 
 from agent.base import DelegationContext, SpecialistAgent
 from agent.blocks import AgentBlock, BlockRegistry
@@ -32,7 +33,7 @@ class FakeSelectionClient:
         yield {"type": "done", "tool_calls": response.get("tool_calls") or []}
 
 
-def selection_call(names: list[str]) -> dict:
+def selection_call(names: Any) -> dict:
     return {
         "id": "selection",
         "type": "function",
@@ -80,6 +81,20 @@ class BlockSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected, ("local_files", "data_analysis"))
         self.assertEqual(len(client.requests), 1)
 
+    async def test_accepts_a_bare_string_for_one_block(self):
+        client = FakeSelectionClient(
+            [{"tool_calls": [selection_call("data_analysis")]}]
+        )
+
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[ChatMessage(role="user", content="Show the trend")],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ("data_analysis",))
+
     async def test_retries_as_plain_json_when_tool_selection_is_missing(self):
         client = FakeSelectionClient(
             [
@@ -97,7 +112,10 @@ class BlockSelectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(selected, ("local_files", "data_analysis"))
         self.assertEqual(client.requests[1]["tools"], [])
-        self.assertIn("intended outcome in any language", client.requests[0]["messages"][0]["content"])
+        self.assertIn(
+            "intended outcome in any language",
+            client.requests[0]["messages"][0]["content"],
+        )
 
     async def test_missing_selection_no_longer_raises_backend_error(self):
         client = FakeSelectionClient([{}, {}])

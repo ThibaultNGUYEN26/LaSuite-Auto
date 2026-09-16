@@ -5,6 +5,7 @@ import { streamChatMessage } from '../api/streamChatMessage'
 import { applyStreamEvent } from '../utils/applyStreamEvent'
 import type { ChatMessage, StreamEvent, WorkflowDraft } from '../types'
 import { draftWorkflow, type Workflow } from '../../workflows/api/workflows'
+import type { SavedConversation } from '../../left-panel/api/conversations'
 import SaveWorkflowModal from '../../workflows/components/SaveWorkflowModal'
 import './ChatWindow.css'
 import Composer from './Composer'
@@ -30,12 +31,33 @@ function seedMessages(workflow: Workflow | undefined): ChatMessage[] {
 }
 
 type ChatWindowProps = {
+  initialConversation?: SavedConversation
   workflow?: Workflow
+  onConversationSaved?: () => void
   onWorkflowSaved?: () => void
 }
 
-function ChatWindow({ workflow, onWorkflowSaved }: ChatWindowProps): React.JSX.Element {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => seedMessages(workflow))
+function ChatWindow({
+  initialConversation,
+  workflow,
+  onConversationSaved,
+  onWorkflowSaved
+}: ChatWindowProps): React.JSX.Element {
+  const [chatId] = useState(
+    () => initialConversation?.id ?? crypto.randomUUID().replaceAll('-', '')
+  )
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (!initialConversation) return seedMessages(workflow)
+    // Per-message timestamps aren't persisted, so approximate them by
+    // spacing messages backward from when the conversation was last saved -
+    // anchoring to Date.now() would show every reopened message as "Just now".
+    const savedAt = new Date(initialConversation.updated_at).getTime()
+    return initialConversation.messages.map((message, index) => ({
+      ...message,
+      id: `${initialConversation.id}-${index}`,
+      createdAt: savedAt - (initialConversation.messages.length - 1 - index) * 1000
+    }))
+  })
   const [input, setInput] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [suggestion, setSuggestion] = useState<WorkflowDraft | null>(null)
@@ -88,13 +110,14 @@ function ChatWindow({ workflow, onWorkflowSaved }: ChatWindowProps): React.JSX.E
         setSuggestion(event.data)
         return
       }
+      if (event.type === 'final') onConversationSaved?.()
       setMessages((current) =>
         current.map((m) => (m.id === assistantMessage.id ? applyStreamEvent(m, event, askedAt) : m))
       )
     }
 
     try {
-      await streamChatMessage(nextMessages, onEvent, controller.signal)
+      await streamChatMessage(chatId, nextMessages, onEvent, controller.signal)
     } catch (error) {
       if ((error as Error).name === 'AbortError') return
       patchMessage(assistantMessage.id, {

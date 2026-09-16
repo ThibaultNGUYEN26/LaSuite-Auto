@@ -10,9 +10,12 @@ from agent.specializations import list_specializations
 
 from config import settings
 from db import get_db, init_db
+from repositories import chat_repository
 from repositories import workflow_repository
 from schemas import (
     AgentSpecializationOut,
+    ChatMessage,
+    ChatRead,
     ChatRequest,
     WorkflowCreate,
     WorkflowDraftRequest,
@@ -43,15 +46,23 @@ def health() -> dict[str, str]:
 def new_conversation() -> dict[str, str]:
     """Acknowledge a new-conversation request.
 
-    Chat history is kept client-side and sent in full on every request, so
-    there is nothing to create server-side yet; this exists as the hook for
-    the "New conversation" button and future server-side persistence.
+    The renderer creates the conversation ID when the chat view mounts and
+    persists its history with the first stream request.
     """
     return {"status": "ok"}
 
 
+@app.get("/api/conversations")
+def list_conversations(db: Session = Depends(get_db)) -> list[ChatRead]:
+    return [ChatRead.model_validate(chat) for chat in chat_repository.list_all(db)]
+
+
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
+async def chat_stream(
+    request: ChatRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
     """Stream orchestrator progress and answer tokens as Server-Sent Events.
 
     Once the response has started, a 200 status and its headers are already
@@ -59,11 +70,24 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     event instead of an HTTP error status.
     """
 
+    chat_id = request.chat_id
+    if chat_id:
+        chat_repository.save_history(db, chat_id, request.messages)
+
     async def event_source():
         try:
             async for event in run_stream(request.messages):
                 if await http_request.is_disconnected():
                     return
+                if chat_id and event.type == "final":
+                    chat_repository.save_history(
+                        db,
+                        chat_id,
+                        [
+                            *request.messages,
+                            ChatMessage(role="assistant", content=event.data["content"]),
+                        ],
+                    )
                 yield event.to_sse()
         except AgentError as exc:
             yield AgentEvent(

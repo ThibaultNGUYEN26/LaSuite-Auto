@@ -15,7 +15,7 @@ class Base(DeclarativeBase):
     pass
 
 
-_db_path = Path(settings.workflows_db_path).expanduser()
+_db_path = Path(settings.db_path).expanduser()
 _db_path.parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(

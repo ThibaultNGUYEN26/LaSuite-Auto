@@ -235,16 +235,19 @@ def read_local_pdf(root: Path, relative_path: str, *, max_bytes: int) -> bytes:
     return data
 
 
-def create_local_text_file(
+def prepare_new_local_file(
     root: Path,
     *,
     directory: str,
     file_name: str,
     extension: str,
-    content: str,
-    max_bytes: int,
-) -> dict[str, Any]:
-    """Create one UTF-8 file without overwriting an existing path."""
+) -> tuple[Path, str]:
+    """Validate a requested new file name/extension and return its target path.
+
+    The returned path does not exist yet. Callers must create it themselves,
+    ideally with an exclusive ("x") open mode, so an existing file already at
+    that path is never silently overwritten.
+    """
     target_directory = resolve_local_directory(root, directory)
     clean_name = file_name.strip()
     clean_extension = extension.strip().removeprefix(".")
@@ -261,17 +264,33 @@ def create_local_text_file(
     if not EXTENSION_PATTERN.fullmatch(clean_extension):
         raise LocalFilesError("extension must contain only letters, numbers, _ or -")
 
-    encoded = content.encode("utf-8")
-    if len(encoded) > max_bytes:
-        raise LocalFilesError(
-            f"File content exceeds the configured {max_bytes}-byte creation limit"
-        )
     target = (target_directory / f"{clean_name}.{clean_extension}").resolve()
     resolved_root = _root_directory(root)
     try:
         relative_path = target.relative_to(resolved_root).as_posix()
     except ValueError as exc:
         raise LocalFilesError("Target path escapes the configured local-files root") from exc
+    return target, relative_path
+
+
+def create_local_text_file(
+    root: Path,
+    *,
+    directory: str,
+    file_name: str,
+    extension: str,
+    content: str,
+    max_bytes: int,
+) -> dict[str, Any]:
+    """Create one UTF-8 file without overwriting an existing path."""
+    encoded = content.encode("utf-8")
+    if len(encoded) > max_bytes:
+        raise LocalFilesError(
+            f"File content exceeds the configured {max_bytes}-byte creation limit"
+        )
+    target, relative_path = prepare_new_local_file(
+        root, directory=directory, file_name=file_name, extension=extension
+    )
     try:
         with target.open("x", encoding="utf-8", newline="") as file:
             file.write(content)
@@ -291,7 +310,7 @@ def create_local_text_file(
     return {
         "status": "created",
         "relative_path": relative_path,
-        "extension": f".{clean_extension}",
+        "extension": target.suffix,
         "bytes_written": len(encoded),
         "artifact": artifact.tool_value(),
     }

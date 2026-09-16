@@ -134,6 +134,9 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "local_files_read_text",
                 "local_files_rename_file",
                 "run_python",
+                "pdf_create",
+                "pdf_apply_template",
+                "pdf_run_script",
             },
         )
 

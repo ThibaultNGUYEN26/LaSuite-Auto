@@ -78,7 +78,14 @@ class Settings:
     data_analysis_max_rows: int = int(
         os.environ.get("DATA_ANALYSIS_MAX_ROWS", "10000")
     )
+    pdf_max_create_characters: int = int(
+        os.environ.get("PDF_MAX_CREATE_CHARACTERS", "200000")
+    )
+    pdf_max_template_source_bytes: int = int(
+        os.environ.get("PDF_MAX_TEMPLATE_SOURCE_BYTES", str(5 * 1024 * 1024))
+    )
     workflows_db_path: str = os.environ.get("WORKFLOWS_DB_PATH", "./data/workflows.db")
+    db_path: str = os.environ.get("DB_PATH", "./data/auto.db")
 
     # Full URL (protocol + host + port) the backend binds to and that the
     # frontend uses to reach it. Shared with the frontend via the same

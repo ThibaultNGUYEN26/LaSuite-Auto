@@ -27,6 +27,7 @@ check-uv:
 	}
 
 back-install: check-uv env
+	npm install sqlite3
 	cd backend && uv sync --system-certs
 
 front-install: env
