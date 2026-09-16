@@ -132,4 +132,7 @@ async def select_blocks(
                 f"The capability selector returned unknown blocks: {', '.join(unknown)}"
             )
         return tuple(dict.fromkeys(selected))
-    raise AgentError("The capability selector did not choose any block set")
+    # Some models ignore a forced tool_choice and answer in plain text instead.
+    # Selection is only a relevance filter, so fail open to every block rather
+    # than blocking the whole request on that quirk.
+    return blocks.names
