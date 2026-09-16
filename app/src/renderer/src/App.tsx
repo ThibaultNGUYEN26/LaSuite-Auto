@@ -26,6 +26,7 @@ function App(): React.JSX.Element {
         }
         isLeftPanelOpen={isLeftPanelOpen}
         setIsLeftPanelOpen={setIsLeftPanelOpen}
+        enableResize
         leftPanelContent={
           <>
             <ConversationList

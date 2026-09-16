@@ -127,7 +127,7 @@ function AccessSettingsModal({ onClose }: AccessSettingsModalProps): React.JSX.E
                   icon={<Icon name="add" size={IconSize.SMALL} />}
                   disabled
                 >
-                  Add from store
+                  Add community tools
                 </Button>
               </span>
             </Tooltip>
