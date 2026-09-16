@@ -5,8 +5,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from pypdf import PdfReader
-
+from agent.artifact_store import MemoryArtifactStore
+from agent.artifacts import Artifact
 from agent.base import DelegationContext
 from agent.specialists.data_analysis import AnalyzeTableAgent
 from services.grist import read_grist_table
@@ -14,7 +14,7 @@ from services.tabular_analysis import analyze_table, parse_ods_data
 
 
 class DataAnalysisAgentTests(unittest.TestCase):
-    def test_analyzes_local_csv_and_creates_comprehensive_pdf(self):
+    def test_analyzes_local_csv_and_returns_an_in_memory_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "sales.csv").write_text(
@@ -24,12 +24,14 @@ class DataAnalysisAgentTests(unittest.TestCase):
                 "2026-03-01,180,8,North\n",
                 encoding="utf-8",
             )
+            store = MemoryArtifactStore()
             agent = AnalyzeTableAgent(
                 local_files_root=root,
                 drive_base_url="http://drive:8071",
                 drive_session_id="session",
                 grist_base_url="http://grist:8484",
                 grist_api_key="key",
+                artifact_store=store,
             )
 
             result = agent.execute(
@@ -43,7 +45,6 @@ class DataAnalysisAgentTests(unittest.TestCase):
                         "metadata": {},
                     },
                     "question": "What is the revenue tendency over time?",
-                    "report_name": "sales-analysis",
                     "date_column": "date",
                     "value_columns": ["revenue"],
                 },
@@ -55,16 +56,17 @@ class DataAnalysisAgentTests(unittest.TestCase):
             self.assertEqual(result["trends"][0]["direction"], "upward")
             self.assertGreater(result["trends"][0]["percentage_change"], 79)
             self.assertGreater(result["trends"][0]["r_squared"], 0.9)
-            self.assertEqual(result["artifact"]["media_type"], "application/pdf")
-            report_path = root / "sales-analysis.pdf"
-            self.assertTrue(report_path.read_bytes().startswith(b"%PDF-"))
-            report = "".join(
-                page.extract_text() or "" for page in PdfReader(report_path).pages
+            artifact = Artifact.model_validate(result["artifact"])
+            self.assertEqual(artifact.kind, "data_analysis")
+            self.assertEqual(artifact.location, "memory")
+            self.assertEqual(
+                artifact.media_type,
+                "application/vnd.lasuite.data-analysis+json",
             )
-            self.assertIn("Executive summary", report)
-            self.assertIn("Numeric distributions", report)
-            self.assertIn("Methodology", report)
-            self.assertIn("Limitations and interpretation", report)
+            payload = store.get(artifact, expected_kind="data_analysis")
+            self.assertEqual(payload["source_name"], "sales.csv")
+            self.assertFalse(any(root.glob("*.pdf")))
+            self.assertIn("pdf_render_analysis", result["next_action"])
 
     def test_analysis_includes_quality_outliers_and_period_dynamics(self):
         analysis = analyze_table(
@@ -94,12 +96,14 @@ class DataAnalysisAgentTests(unittest.TestCase):
         self.assertTrue(analysis["findings"])
         self.assertTrue(analysis["limitations"])
 
-    def test_html_is_not_an_available_report_format(self):
-        report_format = AnalyzeTableAgent.parameters["properties"].get("report_format")
+    def test_report_arguments_are_not_part_of_the_analyst_contract(self):
+        properties = AnalyzeTableAgent.parameters["properties"]
 
-        self.assertIsNone(report_format)
+        self.assertNotIn("report_format", properties)
+        self.assertNotIn("report_name", properties)
+        self.assertNotIn("output_directory", properties)
 
-    def test_creates_a_pdf_report_by_default(self):
+    def test_preserves_unicode_in_the_analysis_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             (root / "activité.csv").write_text(
@@ -108,12 +112,14 @@ class DataAnalysisAgentTests(unittest.TestCase):
                 "2025-01-01,48.7\n",
                 encoding="utf-8-sig",
             )
+            store = MemoryArtifactStore()
             agent = AnalyzeTableAgent(
                 local_files_root=root,
                 drive_base_url="http://drive:8071",
                 drive_session_id="session",
                 grist_base_url="http://grist:8484",
                 grist_api_key="key",
+                artifact_store=store,
             )
 
             result = agent.execute(
@@ -127,20 +133,14 @@ class DataAnalysisAgentTests(unittest.TestCase):
                         "metadata": {},
                     },
                     "question": "Quelle est l'évolution de la surface pâturale ?",
-                    "report_name": "rapport-pâturage",
                 },
                 DelegationContext(conversation=()),
             )
 
-            report_path = root / "rapport-pâturage.pdf"
-            self.assertEqual(result["report_format"], "pdf")
-            self.assertEqual(result["artifact"]["media_type"], "application/pdf")
-            self.assertTrue(report_path.read_bytes().startswith(b"%PDF-"))
-            extracted = "".join(
-                page.extract_text() or "" for page in PdfReader(report_path).pages
-            )
-            self.assertIn("évolution", extracted)
-            self.assertIn("Time-series analysis", extracted)
+            artifact = Artifact.model_validate(result["artifact"])
+            payload = store.get(artifact, expected_kind="data_analysis")
+            self.assertIn("évolution", payload["analysis"]["question"])
+            self.assertEqual(payload["source_name"], "activité.csv")
 
     def test_parses_first_sheet_from_an_ods_spreadsheet(self):
         content_xml = b"""<?xml version="1.0" encoding="UTF-8"?>

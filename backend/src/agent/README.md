@@ -131,19 +131,26 @@ rename it descriptively” in one request.
 `data_analyze_table` accepts local or Drive `.csv` and `.ods` file artifacts,
 as well as Grist document artifacts. It calculates data-quality indicators,
 descriptive statistics, distributions, outliers, correlations, period changes,
-and date-based trends. It creates a comprehensive PDF report with charts, an
-executive summary, methodology, and limitations under `LOCAL_FILES_ROOT`. The
-resulting artifact can be passed directly to `drive_upload_file`.
+and date-based trends. It returns a bounded in-memory `data_analysis` artifact;
+it does not create files. `pdf_render_analysis` consumes that artifact and creates
+the comprehensive PDF report with charts, an executive summary, methodology, and
+limitations under `LOCAL_FILES_ROOT`. The resulting PDF artifact can then be
+passed directly to `drive_upload_file`.
 
-Analysis is bounded by `DATA_ANALYSIS_MAX_SOURCE_BYTES`,
-`DATA_ANALYSIS_MAX_REPORT_BYTES`, and `DATA_ANALYSIS_MAX_ROWS`. The first usable
-Grist table or first ODS sheet is selected unless a Grist table ID is supplied.
+Analysis is bounded by `DATA_ANALYSIS_MAX_SOURCE_BYTES` and
+`DATA_ANALYSIS_MAX_ROWS`; rendered reports are bounded by `PDF_MAX_REPORT_BYTES`.
+The first usable Grist table or first ODS sheet is selected unless a Grist table
+ID is supplied.
 
 ## Creating and editing PDFs
 
 `pdf_create` writes a simple PDF (optional title plus plain-text body) below
 `LOCAL_FILES_ROOT`, using the same non-overwriting, no-implicit-directories
 rules as `local_files_create_file`.
+
+`pdf_render_analysis` is the report boundary for the analyst workflow. It reads
+the typed in-memory result from `data_analyze_table` and owns all PDF layout and
+file creation. This keeps the data-analysis block independent from PDF libraries.
 
 `pdf_apply_template` compiles an existing local `.typ` (Typst) file into a
 PDF. Layout - headers, footers, page numbers, styling - is authored directly

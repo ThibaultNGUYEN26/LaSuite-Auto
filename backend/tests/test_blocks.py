@@ -54,6 +54,22 @@ class BlockDiscoveryTests(unittest.TestCase):
         self.assertIn("drive.write", upload.permissions)
         self.assertEqual(upload.accepts[0].kind, "file")
 
+        analyst = next(block for block in blocks if block.name == "data_analysis")
+        analysis_capability = analyst.capability_catalog()[0]
+        pdf = next(block for block in blocks if block.name == "pdf")
+        report_capability = next(
+            capability
+            for capability in pdf.capability_catalog()
+            if capability.name == "pdf_render_analysis"
+        )
+        self.assertEqual(analysis_capability.produces[0].kind, "data_analysis")
+        self.assertEqual(report_capability.accepts[0].kind, "data_analysis")
+        self.assertEqual(report_capability.produces[0].media_types, ("application/pdf",))
+        self.assertIn(
+            ("data_analyze_table", "pdf_render_analysis"),
+            {workflow.capabilities for workflow in analyst.workflows},
+        )
+
     def test_registry_accepts_a_new_block_without_orchestrator_changes(self):
         block = AgentBlock(name="example", agents=(ExampleAgent(),))
 

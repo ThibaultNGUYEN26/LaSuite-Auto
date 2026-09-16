@@ -72,9 +72,6 @@ class Settings:
     data_analysis_max_source_bytes: int = int(
         os.environ.get("DATA_ANALYSIS_MAX_SOURCE_BYTES", str(20 * 1024 * 1024))
     )
-    data_analysis_max_report_bytes: int = int(
-        os.environ.get("DATA_ANALYSIS_MAX_REPORT_BYTES", str(5 * 1024 * 1024))
-    )
     data_analysis_max_rows: int = int(
         os.environ.get("DATA_ANALYSIS_MAX_ROWS", "10000")
     )
@@ -83,6 +80,12 @@ class Settings:
     )
     pdf_max_template_source_bytes: int = int(
         os.environ.get("PDF_MAX_TEMPLATE_SOURCE_BYTES", str(5 * 1024 * 1024))
+    )
+    pdf_max_report_bytes: int = int(
+        os.environ.get(
+            "PDF_MAX_REPORT_BYTES",
+            os.environ.get("DATA_ANALYSIS_MAX_REPORT_BYTES", str(5 * 1024 * 1024)),
+        )
     )
     workflows_db_path: str = os.environ.get("WORKFLOWS_DB_PATH", "./data/workflows.db")
     db_path: str = os.environ.get("DB_PATH", "./data/auto.db")

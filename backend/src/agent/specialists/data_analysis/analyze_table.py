@@ -1,4 +1,4 @@
-"""Analyze CSV, ODS, or Grist data and create a comprehensive PDF report."""
+"""Analyze CSV, ODS, or Grist data into a portable analysis artifact."""
 
 from __future__ import annotations
 
@@ -7,16 +7,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent.artifact_store import MemoryArtifactStore, memory_artifact_store
 from agent.artifacts import Artifact
 from agent.base import DelegationContext, SpecialistAgent
 from agent.errors import DataAnalysisError, DriveAPIError, GristAPIError, LocalFilesError
 from services.drive import download_drive_file
 from services.grist import read_grist_table
-from services.local_files import (
-    create_local_binary_file,
-    read_local_file,
-)
-from services.pdf_report import render_pdf_report
+from services.local_files import read_local_file
 from services.tabular_analysis import (
     analyze_table,
     parse_csv_data,
@@ -32,13 +29,12 @@ class AnalyzeTableAgent(SpecialistAgent):
     name = "data_analyze_table"
     description = (
         "Perform a comprehensive statistical analysis of a CSV file, OpenDocument "
-        "ODS spreadsheet, or Grist document and create a local PDF report with an "
-        "executive summary, data-quality checks, distributions, outliers, date-based "
+        "ODS spreadsheet, or Grist document. Produce a typed in-memory analysis "
+        "artifact containing data-quality checks, distributions, outliers, date-based "
         "trends, charts, period changes, category concentration, correlations, "
-        "methodology, and limitations. Use the "
-        "user's exact analytical question as question. The returned report artifact "
-        "can be passed directly to drive_upload_file when the user wants the report "
-        "in Drive."
+        "methodology, and limitations. Use the user's exact analytical question as "
+        "question. When a report is requested, pass the returned artifact to "
+        "pdf_render_analysis; do not claim a report exists after analysis alone."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -84,20 +80,8 @@ class AnalyzeTableAgent(SpecialistAgent):
                 "items": {"type": "string"},
                 "description": "Optional numeric columns to prioritize.",
             },
-            "report_name": {
-                "type": "string",
-                "description": "Output report filename without its extension.",
-            },
-            "output_directory": {
-                "type": "string",
-                "description": (
-                    "Existing directory relative to LOCAL_FILES_ROOT. Use . unless "
-                    "the user selected another local folder."
-                ),
-                "default": ".",
-            },
         },
-        "required": ["question", "report_name"],
+        "required": ["question"],
         "anyOf": [
             {"required": ["artifact"]},
             {"required": ["source_type", "source"]},
@@ -114,8 +98,8 @@ class AnalyzeTableAgent(SpecialistAgent):
         grist_base_url: str,
         grist_api_key: str | None,
         max_source_bytes: int = 20 * 1024 * 1024,
-        max_report_bytes: int = 5 * 1024 * 1024,
         max_rows: int = 10_000,
+        artifact_store: MemoryArtifactStore = memory_artifact_store,
     ) -> None:
         self.local_files_root = local_files_root
         self.drive_base_url = drive_base_url
@@ -123,8 +107,8 @@ class AnalyzeTableAgent(SpecialistAgent):
         self.grist_base_url = grist_base_url
         self.grist_api_key = grist_api_key or ""
         self.max_source_bytes = max_source_bytes
-        self.max_report_bytes = max_report_bytes
         self.max_rows = max_rows
+        self.artifact_store = artifact_store
 
     def _artifact_source(self, value: Any) -> tuple[str, str, str | None]:
         try:
@@ -161,14 +145,8 @@ class AnalyzeTableAgent(SpecialistAgent):
     ) -> dict[str, Any]:
         del context
         question = arguments.get("question")
-        report_name = arguments.get("report_name")
         if not isinstance(question, str):
             raise DataAnalysisError("question must be a string")
-        if not isinstance(report_name, str):
-            raise DataAnalysisError("report_name must be a string")
-        output_directory = arguments.get("output_directory", ".")
-        if not isinstance(output_directory, str):
-            raise DataAnalysisError("output_directory must be a string")
         table_id = arguments.get("table_id")
         if table_id is not None and not isinstance(table_id, str):
             raise DataAnalysisError("table_id must be a string")
@@ -228,27 +206,19 @@ class AnalyzeTableAgent(SpecialistAgent):
             requested_value_columns=value_columns,
             truncated=truncated,
         )
-        clean_report_name = report_name.strip()
-        if clean_report_name.lower().endswith(".pdf"):
-            clean_report_name = clean_report_name[:-4]
-        report_title = clean_report_name or "Data analysis report"
-        try:
-            report_data = render_pdf_report(
-                analysis,
-                title=report_title,
-                source_name=source_name,
-            )
-            created = create_local_binary_file(
-                self.local_files_root,
-                directory=output_directory,
-                file_name=report_title,
-                extension="pdf",
-                data=report_data,
-                max_bytes=self.max_report_bytes,
-                media_type="application/pdf",
-            )
-        except LocalFilesError as exc:
-            raise DataAnalysisError(str(exc)) from exc
+        artifact = self.artifact_store.put(
+            {"analysis": analysis, "source_name": source_name},
+            kind="data_analysis",
+            media_type="application/vnd.lasuite.data-analysis+json",
+            name=f"Analysis of {source_name}",
+            metadata={
+                "source": source_name,
+                "question": question,
+                "rows": analysis["row_count"],
+                "columns": analysis["column_count"],
+                "truncated": analysis["truncated"],
+            },
+        )
 
         return {
             "status": "analyzed",
@@ -263,7 +233,11 @@ class AnalyzeTableAgent(SpecialistAgent):
                 for trend in analysis["trends"]
             ],
             "correlations": analysis["correlations"],
-            "report_format": "pdf",
-            "report": created,
-            "artifact": created["artifact"],
+            "findings": analysis["findings"],
+            "limitations": analysis["limitations"],
+            "artifact": artifact.tool_value(),
+            "next_action": (
+                "Use pdf_render_analysis with this artifact when the user requested "
+                "a report. The analysis itself has not created a file."
+            ),
         }
