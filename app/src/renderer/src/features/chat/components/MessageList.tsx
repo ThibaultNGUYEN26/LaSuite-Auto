@@ -1,5 +1,5 @@
 import { Loader } from '@gouvfr-lasuite/cunningham-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { appIconMarkup } from '../../../assets/appIcon'
@@ -17,13 +17,7 @@ function formatTraceValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
 
-function TraceValue({
-  value,
-  kind
-}: {
-  value: unknown
-  kind?: 'result'
-}): React.JSX.Element {
+function TraceValue({ value, kind }: { value: unknown; kind?: 'result' }): React.JSX.Element {
   const preRef = useRef<HTMLPreElement>(null)
   const [expanded, setExpanded] = useState(false)
   const [isClamped, setIsClamped] = useState(false)
@@ -78,12 +72,93 @@ function ChatTrace({ trace }: { trace: TraceEntry[] }): React.JSX.Element {
   )
 }
 
+// Memoized so that a `token` update to the streaming message (a new ChatMessage
+// object) doesn't force every other, unchanged message to re-render and re-parse
+// its markdown on each animation frame.
+const MessageRow = memo(function MessageRow({
+  message,
+  now
+}: {
+  message: ChatMessage
+  now: number
+}): React.JSX.Element {
+  return (
+    <div className="chat-message-row" data-role={message.role}>
+      <div className="chat-message-group">
+        <span className="chat-message-time">
+          {message.role === 'assistant' && message.thinkingMs !== undefined
+            ? formatThinkingDuration(message.thinkingMs)
+            : formatRelativeTime(message.createdAt, now)}
+        </span>
+        <div className="chat-message" data-role={message.role}>
+          {message.role === 'assistant' ? (
+            <>
+              {message.trace && message.trace.length > 0 ? (
+                <details className="chat-trace">
+                  <summary className="chat-trace-summary">
+                    <svg
+                      className="chat-trace-summary__arrow"
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2 1 L8 5 L2 9"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                      />
+                    </svg>
+                    {message.status ? (
+                      <span className="chat-message-status">
+                        <Loader size="small" />
+                        {message.status}
+                      </span>
+                    ) : (
+                      <span>View trace</span>
+                    )}
+                  </summary>
+                  <ChatTrace trace={message.trace} />
+                </details>
+              ) : message.status ? (
+                <span className="chat-message-status">
+                  <Loader size="small" />
+                  {message.status}
+                </span>
+              ) : null}
+              {message.content ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              ) : null}
+            </>
+          ) : (
+            message.content
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
+
 function MessageList({ messages, isSending }: MessageListProps): React.JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const isNearBottomRef = useRef(true)
   const [now, setNow] = useState(() => Date.now())
 
+  const handleScroll = (): void => {
+    const el = containerRef.current
+    if (!el) return
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Only auto-follow the stream if the user hasn't scrolled away from the bottom -
+    // and jump instantly rather than restarting a `smooth` scroll on every batch of
+    // tokens, which is what produced the jumpy/laggy appearance during streaming.
+    if (isNearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: isSending ? 'auto' : 'smooth' })
+    }
   }, [messages, isSending])
 
   useEffect(() => {
@@ -110,57 +185,9 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
   }
 
   return (
-    <div className="chat-messages">
+    <div className="chat-messages" ref={containerRef} onScroll={handleScroll}>
       {visibleMessages.map((message) => (
-        <div key={message.id} className="chat-message-row" data-role={message.role}>
-          <div className="chat-message-group">
-            <span className="chat-message-time">
-              {message.role === 'assistant' && message.thinkingMs !== undefined
-                ? formatThinkingDuration(message.thinkingMs)
-                : formatRelativeTime(message.createdAt, now)}
-            </span>
-            <div className="chat-message" data-role={message.role}>
-              {message.role === 'assistant' ? (
-                <>
-                  {message.trace && message.trace.length > 0 ? (
-                    <details className="chat-trace">
-                      <summary className="chat-trace-summary">
-                        <svg
-                          className="chat-trace-summary__arrow"
-                          width="10"
-                          height="10"
-                          viewBox="0 0 10 10"
-                          aria-hidden="true"
-                        >
-                          <path d="M2 1 L8 5 L2 9" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                        </svg>
-                        {message.status ? (
-                          <span className="chat-message-status">
-                            <Loader size="small" />
-                            {message.status}
-                          </span>
-                        ) : (
-                          <span>View trace</span>
-                        )}
-                      </summary>
-                      <ChatTrace trace={message.trace} />
-                    </details>
-                  ) : message.status ? (
-                    <span className="chat-message-status">
-                      <Loader size="small" />
-                      {message.status}
-                    </span>
-                  ) : null}
-                  {message.content ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                  ) : null}
-                </>
-              ) : (
-                message.content
-              )}
-            </div>
-          </div>
-        </div>
+        <MessageRow key={message.id} message={message} now={now} />
       ))}
       <div ref={bottomRef} />
     </div>

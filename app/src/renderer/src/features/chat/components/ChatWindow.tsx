@@ -64,9 +64,14 @@ function ChatWindow({
   const [draftForSave, setDraftForSave] = useState<WorkflowDraft | null>(null)
   const [isDraftingManually, setIsDraftingManually] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const pendingEventsRef = useRef<StreamEvent[]>([])
+  const flushHandleRef = useRef<number | null>(null)
 
   useEffect(() => {
-    return () => abortControllerRef.current?.abort()
+    return () => {
+      abortControllerRef.current?.abort()
+      if (flushHandleRef.current !== null) cancelAnimationFrame(flushHandleRef.current)
+    }
   }, [])
 
   const canSubmit = input.trim().length > 0 && !isSending
@@ -105,21 +110,54 @@ function ChatWindow({
 
     const askedAt = Date.now()
 
+    // Streams can emit many `token` events per second. Applying each one as its own
+    // setState causes a render (and a markdown re-parse + scroll) per token, which is
+    // what produces the laggy, jumping-around appearance. Buffer events and apply them
+    // in one batch per animation frame instead.
+    const flushPendingEvents = (): void => {
+      flushHandleRef.current = null
+      const events = pendingEventsRef.current
+      pendingEventsRef.current = []
+      if (events.length === 0) return
+      setMessages((current) =>
+        current.map((m) =>
+          m.id === assistantMessage.id
+            ? events.reduce((msg, event) => applyStreamEvent(msg, event, askedAt), m)
+            : m
+        )
+      )
+    }
+
     const onEvent = (event: StreamEvent): void => {
       if (event.type === 'workflow_suggested') {
         setSuggestion(event.data)
         return
       }
       if (event.type === 'final') onConversationSaved?.()
-      setMessages((current) =>
-        current.map((m) => (m.id === assistantMessage.id ? applyStreamEvent(m, event, askedAt) : m))
-      )
+
+      pendingEventsRef.current.push(event)
+
+      // Terminal events should land immediately rather than waiting a frame.
+      if (event.type === 'final' || event.type === 'error') {
+        if (flushHandleRef.current !== null) cancelAnimationFrame(flushHandleRef.current)
+        flushPendingEvents()
+        return
+      }
+
+      if (flushHandleRef.current === null) {
+        flushHandleRef.current = requestAnimationFrame(flushPendingEvents)
+      }
     }
 
     try {
       await streamChatMessage(chatId, nextMessages, onEvent, controller.signal)
     } catch (error) {
       if ((error as Error).name === 'AbortError') return
+      if (flushHandleRef.current !== null) {
+        cancelAnimationFrame(flushHandleRef.current)
+        flushHandleRef.current = null
+      }
+      pendingEventsRef.current = []
       patchMessage(assistantMessage.id, {
         content: `Something went wrong reaching the backend: ${(error as Error).message}`,
         status: undefined,

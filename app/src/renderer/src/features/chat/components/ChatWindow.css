@@ -4,7 +4,7 @@
 }
 
 .chat {
-  --chat-content-max-width: 750px;
+  --chat-content-max-width: 950px;
 
   display: flex;
   flex-direction: column;
@@ -14,6 +14,6 @@
 .workflow-active-banner,
 .workflow-suggestion {
   width: 100%;
-  max-width: var(--chat-content-max-width, 750px);
+  max-width: var(--chat-content-max-width);
   margin: var(--c--globals--spacings--sm) auto 0;
 }
