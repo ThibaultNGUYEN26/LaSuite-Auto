@@ -38,12 +38,18 @@
   background-color: var(--c--contextuals--background--semantic--overlay--primary);
 }
 
+.sidebar-row[data-active='true'] {
+  background-color: var(--c--contextuals--background--semantic--brand--secondary);
+}
+
 .sidebar-row:disabled {
   opacity: 0.6;
   cursor: default;
 }
 
 .sidebar-row-text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   color: var(--c--contextuals--content--semantic--neutral--primary);
   font-family: inherit;

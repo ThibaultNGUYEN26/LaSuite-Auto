@@ -120,19 +120,28 @@ async def select_blocks(
         try:
             arguments = json.loads(function.get("arguments") or "{}")
             selected = arguments["blocks"]
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise AgentError("The capability selector returned invalid data") from exc
-        if not isinstance(selected, list) or not all(
-            isinstance(name, str) for name in selected
-        ):
-            raise AgentError("The capability selector returned invalid block names")
-        unknown = sorted(set(selected) - set(blocks.names))
-        if unknown:
-            raise AgentError(
-                f"The capability selector returned unknown blocks: {', '.join(unknown)}"
-            )
-        return tuple(dict.fromkeys(selected))
-    # Some models ignore a forced tool_choice and answer in plain text instead.
-    # Selection is only a relevance filter, so fail open to every block rather
-    # than blocking the whole request on that quirk.
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+        # Some models occasionally return a bare string instead of a
+        # single-item array; accept that shape rather than discarding a
+        # response that was otherwise on the right track.
+        if isinstance(selected, str):
+            selected = [selected]
+        if not isinstance(selected, list):
+            continue
+        if not selected:
+            # An explicit, well-formed empty list means the model judged no
+            # capability necessary (a purely conversational answer).
+            return ()
+        valid = [
+            name
+            for name in selected
+            if isinstance(name, str) and name in blocks.names
+        ]
+        if valid:
+            return tuple(dict.fromkeys(valid))
+    # Selection is only a relevance filter: a forced tool_choice that the
+    # model ignores, answers with the wrong function, or fills with
+    # malformed/unknown arguments should not block the whole request. Fail
+    # open to every block rather than erroring out on that quirk.
     return blocks.names

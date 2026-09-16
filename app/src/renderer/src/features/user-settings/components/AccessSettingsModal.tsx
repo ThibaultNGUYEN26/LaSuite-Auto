@@ -8,13 +8,48 @@ import {
   Switch,
   Tooltip
 } from '@gouvfr-lasuite/cunningham-react'
-import { HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
+import { Badge, HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
 import { useEffect, useState } from 'react'
 import { getAgentSpecializations } from '../api/getAgentSpecializations'
 import type { AgentSpecialization } from '../types'
 import './AccessSettingsModal.css'
 
 type AccessLevel = 'read_only' | 'read_write' | 'full_access'
+
+// Demo-only teasers: these specializations don't exist yet on the backend.
+// They're shown disabled with a "Coming soon" badge to preview the roadmap.
+const TEASER_SPECIALIZATIONS: AgentSpecialization[] = [
+  {
+    id: 'teaser-web-browsing',
+    name: 'Web browsing',
+    description: 'Browses the internet to research topics, check facts, and pull live information.',
+    enabled: false,
+    tools: [
+      { name: 'web_search', description: 'Search the web for relevant pages' },
+      { name: 'fetch_page', description: 'Open and read the content of a web page' }
+    ]
+  },
+  {
+    id: 'teaser-email-connector',
+    name: 'Email connector',
+    description: 'Reads and sends email on your behalf through a connected inbox.',
+    enabled: false,
+    tools: [
+      { name: 'read_inbox', description: 'Search and read messages in a connected mailbox' },
+      { name: 'send_email', description: 'Draft and send an email' }
+    ]
+  },
+  {
+    id: 'teaser-france-transfert',
+    name: 'France Transfert sharing',
+    description: 'Generates France Transfert links to share large files securely.',
+    enabled: false,
+    tools: [
+      { name: 'upload_file', description: 'Upload a file to France Transfert' },
+      { name: 'create_share_link', description: 'Create a shareable download link' }
+    ]
+  }
+]
 
 type AccessSettingsModalProps = {
   onClose: () => void
@@ -171,6 +206,53 @@ function AccessSettingsModal({ onClose }: AccessSettingsModalProps): React.JSX.E
                     checked={spec.enabled}
                     onChange={() => toggleSpecialization(spec.id)}
                   />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <HorizontalSeparator />
+
+        <section className="access-settings__section">
+          <div className="access-settings__section-header">
+            <h3 className="access-settings__heading">Coming soon</h3>
+            <Badge type="info">Preview</Badge>
+          </div>
+          <p className="access-settings__hint">
+            Specializations on the roadmap. They&apos;re shown here for preview only — nothing is
+            wired up on the backend yet.
+          </p>
+
+          <ul className="specialization-list">
+            {TEASER_SPECIALIZATIONS.map((spec) => (
+              <li key={spec.id} className="specialization-row" data-enabled="false" data-teaser>
+                <div className="specialization-row__icon">
+                  <Icon name="smart_toy" size={IconSize.SMALL} />
+                </div>
+                <div className="specialization-row__text">
+                  <div className="specialization-row__title">
+                    {spec.name} <Badge type="neutral">Coming soon</Badge>
+                  </div>
+                  <div className="specialization-row__subtitle">{spec.description}</div>
+                  <div className="specialization-row__tools">
+                    {spec.tools.map((tool) => (
+                      <span
+                        key={tool.name}
+                        className="specialization-row__tool"
+                        title={tool.description}
+                      >
+                        {tool.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="specialization-row__action">
+                  <Tooltip content="Not available yet">
+                    <span>
+                      <Switch label="Disabled" checked={false} disabled onChange={() => {}} />
+                    </span>
+                  </Tooltip>
                 </div>
               </li>
             ))}

@@ -46,15 +46,18 @@ function ChatWindow({
   const [chatId] = useState(
     () => initialConversation?.id ?? crypto.randomUUID().replaceAll('-', '')
   )
-  const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    initialConversation
-      ? initialConversation.messages.map((message, index) => ({
-          ...message,
-          id: `${initialConversation.id}-${index}`,
-          createdAt: Date.now() - (initialConversation.messages.length - index) * 1000
-        }))
-      : seedMessages(workflow)
-  )
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (!initialConversation) return seedMessages(workflow)
+    // Per-message timestamps aren't persisted, so approximate them by
+    // spacing messages backward from when the conversation was last saved -
+    // anchoring to Date.now() would show every reopened message as "Just now".
+    const savedAt = new Date(initialConversation.updated_at).getTime()
+    return initialConversation.messages.map((message, index) => ({
+      ...message,
+      id: `${initialConversation.id}-${index}`,
+      createdAt: savedAt - (initialConversation.messages.length - 1 - index) * 1000
+    }))
+  })
   const [input, setInput] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [suggestion, setSuggestion] = useState<WorkflowDraft | null>(null)
