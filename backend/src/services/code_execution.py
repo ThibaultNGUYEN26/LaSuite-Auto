@@ -42,11 +42,13 @@ def _run_subprocess(
         }
 
 
-def run_python_code(code: str, *, timeout: int = 10) -> dict[str, Any]:
+def run_python_code(
+    code: str, *, timeout: int = 10, cwd: str | Path | None = None
+) -> dict[str, Any]:
     if not isinstance(code, str) or not code.strip():
         raise CodeExecutionError("code must be a non-empty string")
 
-    return _run_subprocess([sys.executable, "-c", code], timeout=timeout)
+    return _run_subprocess([sys.executable, "-c", code], timeout=timeout, cwd=cwd)
 
 
 def run_python_file(
