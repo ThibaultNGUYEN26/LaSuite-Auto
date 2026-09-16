@@ -7,11 +7,42 @@ from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from agent.blocks import BlockRegistry
-from agent.errors import AgentError
 from schemas import ChatMessage
 
 
 SELECTION_FUNCTION = "select_capability_blocks"
+
+
+def _validated_selection(
+    value: Any, available: tuple[str, ...]
+) -> tuple[str, ...] | None:
+    if not isinstance(value, list) or not all(
+        isinstance(name, str) for name in value
+    ):
+        return None
+    available_names = set(available)
+    if any(name not in available_names for name in value):
+        return None
+    return tuple(dict.fromkeys(value))
+
+
+def _selection_from_text(
+    content: str, available: tuple[str, ...]
+) -> tuple[str, ...] | None:
+    clean = content.strip()
+    if not clean:
+        return None
+    if clean.startswith("```") and clean.endswith("```"):
+        lines = clean.splitlines()
+        clean = "\n".join(lines[1:-1]).strip()
+    try:
+        payload = json.loads(clean)
+    except json.JSONDecodeError:
+        mentioned = [name for name in available if name in clean]
+        return tuple(mentioned) if mentioned else None
+    if isinstance(payload, dict):
+        payload = payload.get("blocks")
+    return _validated_selection(payload, available)
 
 
 class SelectionClient(Protocol):
@@ -69,8 +100,15 @@ async def select_blocks(
     ]
     selection_instructions = (
         "You select relevant capability blocks for another reasoning agent. "
+        "Understand the user's intended outcome in any language; the user does "
+        "not need to name a block, integration, filename, or technical action. "
         "Choose all blocks that may participate in the request, including "
         "sources, transformations, and destinations in a multi-step task. "
+        "Prefer purpose-built blocks over general code execution whenever a "
+        "dedicated capability covers the requested outcome. "
+        "For analysis, trends, evolution, comparisons, or change over time, "
+        "select a matching analysis block. When the data location is stated or "
+        "existing files must be discovered, also select the relevant source block. "
         "When execution progress is supplied, choose every block that may still "
         "be needed to finish the original request. Do not execute the task. "
         "Here is the compact block catalog:\n"
@@ -92,7 +130,7 @@ async def select_blocks(
     if execution_context:
         progress = json.dumps(execution_context[-8:], ensure_ascii=False)
         if len(progress) > 12_000:
-            progress = progress[:12_000] + "…"
+            progress = progress[:12_000] + "..."
         messages.append(
             {
                 "role": "system",
@@ -104,13 +142,16 @@ async def select_blocks(
             }
         )
     tool_calls: list[dict[str, Any]] = []
+    content_parts: list[str] = []
     async for chunk in client.chat_completion_stream(
         model=model,
         messages=messages,
         tools=tools,
         tool_choice={"type": "function", "function": {"name": SELECTION_FUNCTION}},
     ):
-        if chunk.get("type") == "done":
+        if chunk.get("type") == "content" and isinstance(chunk.get("delta"), str):
+            content_parts.append(chunk["delta"])
+        elif chunk.get("type") == "done":
             tool_calls = chunk.get("tool_calls") or []
 
     for tool_call in tool_calls:
@@ -119,17 +160,41 @@ async def select_blocks(
             continue
         try:
             arguments = json.loads(function.get("arguments") or "{}")
-            selected = arguments["blocks"]
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise AgentError("The capability selector returned invalid data") from exc
-        if not isinstance(selected, list) or not all(
-            isinstance(name, str) for name in selected
-        ):
-            raise AgentError("The capability selector returned invalid block names")
-        unknown = sorted(set(selected) - set(blocks.names))
-        if unknown:
-            raise AgentError(
-                f"The capability selector returned unknown blocks: {', '.join(unknown)}"
-            )
-        return tuple(dict.fromkeys(selected))
-    raise AgentError("The capability selector did not choose any block set")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        selected = _validated_selection(arguments.get("blocks"), blocks.names)
+        if selected is not None:
+            return selected
+
+    selected = _selection_from_text("".join(content_parts), blocks.names)
+    if selected is not None:
+        return selected
+
+    retry_messages = [
+        *messages,
+        {
+            "role": "system",
+            "content": (
+                "The previous selection response was missing or malformed. Return "
+                "only JSON in this exact form: {\"blocks\": [\"block_name\"]}. "
+                "Use only names from the catalog. An empty list is valid only when "
+                "the request needs no capability."
+            ),
+        },
+    ]
+    retry_content: list[str] = []
+    async for chunk in client.chat_completion_stream(
+        model=model,
+        messages=retry_messages,
+        tools=[],
+        tool_choice="auto",
+    ):
+        if chunk.get("type") == "content" and isinstance(chunk.get("delta"), str):
+            retry_content.append(chunk["delta"])
+    selected = _selection_from_text("".join(retry_content), blocks.names)
+    if selected is not None:
+        return selected
+
+    # Selector formatting failures must not become user-visible backend errors.
+    # With no new tools, the planner can ask the user where the data is located.
+    return currently_selected

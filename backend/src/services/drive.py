@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 from collections import deque
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
@@ -13,6 +15,7 @@ from uuid import UUID
 
 from agent.artifacts import Artifact
 from agent.errors import DriveAPIError
+from services.text_content import decode_text_content
 
 MAX_TRAVERSAL_DEPTH = 5
 
@@ -166,7 +169,11 @@ def list_drive_items(
                             if isinstance(item.get("mimetype"), str)
                             else "application/octet-stream"
                         ),
-                        name=str(name),
+                        name=(
+                            item.get("filename")
+                            if isinstance(item.get("filename"), str)
+                            else str(name)
+                        ),
                     ).tool_value()
                 items.append(compact_item)
                 if (
@@ -322,6 +329,136 @@ def download_drive_pdf(
     if not data.startswith(b"%PDF-"):
         raise DriveAPIError("The selected Drive item is not a valid PDF file")
     return data
+
+
+def read_drive_text(
+    base_url: str,
+    session_id: str,
+    item_id: str,
+    *,
+    filename: str,
+    max_bytes: int = 20 * 1024 * 1024,
+    max_characters: int = 100_000,
+) -> dict[str, Any]:
+    """Download and decode one bounded text-based Drive file."""
+    if not isinstance(filename, str) or not filename.strip():
+        raise DriveAPIError("filename must be a non-empty string")
+    data = download_drive_file(
+        base_url,
+        session_id,
+        item_id,
+        max_bytes=max_bytes,
+    )
+    content, encoding, total_characters, truncated = decode_text_content(
+        data,
+        filename=filename,
+        max_characters=max_characters,
+        error_type=DriveAPIError,
+    )
+    artifact = Artifact(
+        kind="file",
+        location="drive",
+        reference=item_id,
+        media_type=mimetypes.guess_type(filename)[0] or "text/plain",
+        name=filename,
+    )
+    return {
+        "status": "read",
+        "id": item_id,
+        "name": filename,
+        "encoding": encoding,
+        "characters": total_characters,
+        "returned_characters": len(content),
+        "truncated": truncated,
+        "content": content,
+        "artifact": artifact.tool_value(),
+    }
+
+
+def rename_drive_file(
+    base_url: str,
+    session_id: str,
+    item_id: str,
+    *,
+    new_name: str,
+    csrf_token: str | None = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Update a Drive file title without changing its stored bytes or type."""
+    _validate_uuid(item_id, field="item_id")
+    if not isinstance(new_name, str):
+        raise DriveAPIError("new_name must be a string")
+    clean_name = new_name.strip()
+    if (
+        not clean_name
+        or clean_name in {".", ".."}
+        or Path(clean_name).name != clean_name
+        or any(character in clean_name for character in '<>:"/\\|?*')
+        or clean_name.endswith((" ", "."))
+    ):
+        raise DriveAPIError("new_name contains invalid characters")
+
+    endpoint = urljoin(
+        f"{base_url.rstrip('/')}/",
+        f"api/v1.0/items/{item_id}/",
+    )
+    headers = _write_headers(session_id, csrf_token)
+    current = _read_json(
+        Request(endpoint, headers=headers, method="GET"),
+        service="Drive",
+        timeout=timeout,
+    )
+    if current.get("type") != "file":
+        raise DriveAPIError("The selected Drive item is not a file")
+    filename = current.get("filename")
+    extension = Path(filename).suffix if isinstance(filename, str) else ""
+    supplied_extension = Path(clean_name).suffix
+    if supplied_extension:
+        if extension and supplied_extension.lower() != extension.lower():
+            raise DriveAPIError(
+                "Renaming cannot change the Drive file type; keep the current extension"
+            )
+        clean_name = clean_name[: -len(supplied_extension)]
+    if not clean_name or len(clean_name) > 255:
+        raise DriveAPIError("new_name must contain 1 to 255 characters")
+    if current.get("title") == clean_name:
+        raise DriveAPIError("The Drive file already has that name")
+
+    request = Request(
+        endpoint,
+        data=json.dumps({"title": clean_name}, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+        method="PATCH",
+    )
+    try:
+        updated = _read_json(request, service="Drive", timeout=timeout)
+    except DriveAPIError as exc:
+        if csrf_token is None and "HTTP 403" in str(exc):
+            raise DriveAPIError(
+                "Drive rejected the rename. Set DRIVE_CSRF_TOKEN to the value "
+                "of your csrftoken cookie and restart the backend."
+            ) from exc
+        raise
+    updated_filename = updated.get("filename") or filename
+    media_type = updated.get("mimetype")
+    if not isinstance(media_type, str):
+        media_type = mimetypes.guess_type(updated_filename or "")[0] or "application/octet-stream"
+    artifact = Artifact(
+        kind="file",
+        location="drive",
+        reference=item_id,
+        media_type=media_type,
+        name=updated_filename or f"{clean_name}{extension}",
+    )
+    return {
+        "status": "renamed",
+        "id": item_id,
+        "old_title": current.get("title"),
+        "title": updated.get("title") or clean_name,
+        "filename": updated_filename,
+        "url_permalink": updated.get("url_permalink") or current.get("url_permalink"),
+        "artifact": artifact.tool_value(),
+    }
 
 
 def create_drive_file(

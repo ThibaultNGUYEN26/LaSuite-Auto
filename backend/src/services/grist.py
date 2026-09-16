@@ -194,3 +194,80 @@ def import_csv_document(
         "document_url": document_url,
         "artifact": artifact.tool_value(),
     }
+
+
+def read_grist_table(
+    base_url: str,
+    api_key: str,
+    *,
+    document_id: str,
+    table_id: str | None = None,
+    max_rows: int = 10_000,
+    timeout: float = 30.0,
+) -> tuple[list[str], list[list[str]], str, bool]:
+    """Read one Grist table as a bounded rectangular data set."""
+    clean_document_id = document_id.strip()
+    if not clean_document_id:
+        raise GristAPIError("document_id must not be empty")
+    if max_rows < 1:
+        raise GristAPIError("max_rows must be positive")
+    encoded_document = quote(clean_document_id, safe="")
+    headers = _authorization_headers(api_key)
+
+    if table_id is None:
+        tables_endpoint = urljoin(
+            f"{base_url.rstrip('/')}/",
+            f"api/docs/{encoded_document}/tables",
+        )
+        tables_payload = _read_json(
+            Request(tables_endpoint, headers=headers, method="GET"),
+            timeout=timeout,
+        )
+        tables = tables_payload.get("tables") if isinstance(tables_payload, dict) else None
+        if not isinstance(tables, list) or not tables:
+            raise GristAPIError("The Grist document has no accessible tables")
+        first_table = next(
+            (
+                table
+                for table in tables
+                if isinstance(table, dict)
+                and isinstance(table.get("id"), str)
+                and not table["id"].startswith("Grist")
+            ),
+            None,
+        )
+        if first_table is None:
+            raise GristAPIError("The Grist document has no usable data table")
+        table_id = first_table["id"]
+    if not isinstance(table_id, str) or not table_id.strip():
+        raise GristAPIError("table_id must be a non-empty string")
+
+    clean_table_id = table_id.strip()
+    records_endpoint = urljoin(
+        f"{base_url.rstrip('/')}/",
+        f"api/docs/{encoded_document}/tables/{quote(clean_table_id, safe='')}/records",
+    )
+    payload = _read_json(
+        Request(records_endpoint, headers=headers, method="GET"),
+        timeout=timeout,
+    )
+    records = payload.get("records") if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        raise GristAPIError("Grist returned no records array")
+    truncated = len(records) > max_rows
+    records = records[:max_rows]
+    field_names: list[str] = []
+    for record in records:
+        fields = record.get("fields") if isinstance(record, dict) else None
+        if not isinstance(fields, dict):
+            continue
+        for name in fields:
+            if name not in field_names:
+                field_names.append(name)
+    if not field_names:
+        raise GristAPIError("The selected Grist table has no data columns")
+    rows = []
+    for record in records:
+        fields = record.get("fields") if isinstance(record, dict) else {}
+        rows.append(["" if fields.get(name) is None else str(fields.get(name)) for name in field_names])
+    return field_names, rows, clean_table_id, truncated

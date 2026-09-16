@@ -119,6 +119,12 @@ local file creation can produce a CSV artifact and make the Grist block availabl
 for the next step, even when the initial selection only chose local files. This
 keeps cross-block plans agentic without exposing every installed tool at once.
 
+For example, the built-in `data_analysis` block accepts CSV/ODS file artifacts
+from local files or Drive and Grist document artifacts. It emits a PDF report
+artifact by default, with HTML available explicitly. A request to publish the report can therefore be planned as
+`source discovery → data_analyze_table → drive_upload_file`; none of those domain
+capabilities are imported by the orchestrator.
+
 `WorkflowManifest` declares a dependable known sequence. It is routing metadata,
 not a hard-coded replacement for reasoning: the orchestrator may still construct
 a different plan when the request requires one.

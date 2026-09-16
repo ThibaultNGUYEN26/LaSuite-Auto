@@ -86,6 +86,15 @@ only for explicit file-creation requests. Existing files are never overwritten,
 directories are not created implicitly, and content size is bounded by
 `LOCAL_FILES_MAX_CREATE_BYTES`.
 
+`local_files_rename_file` renames one file within its current local directory.
+It preserves the existing extension when the requested new name omits one,
+never overwrites another file, and returns an updated local file artifact.
+
+`local_files_read_text` reads bounded CSV, TSV, TXT, Markdown, JSON, XML, YAML,
+and log files. It handles UTF-8 BOMs, UTF-16 BOMs, and Windows-1252 text, making
+content-aware operations such as “inspect this unknown file and rename it”
+possible entirely inside the local-files block.
+
 ## Creating Drive files
 
 `drive_create_file` uploads a new UTF-8 text file either to the top of My Files
@@ -105,6 +114,25 @@ failure. `DRIVE_MAX_BATCH_FILES` controls the maximum number of files per batch.
 preserved, including PDFs, images, archives, office documents, and arbitrary
 binary formats. Its source path is restricted to `LOCAL_FILES_ROOT`, it can
 target a Drive folder UUID, and uploads are bounded by `DRIVE_MAX_UPLOAD_BYTES`.
+
+`drive_read_text` reads bounded CSV and other text-based Drive files using the
+same BOM-aware encodings as local files. `drive_rename_file` updates a file's
+Drive title without downloading or re-uploading its bytes; it preserves the
+existing file type. Together they support “inspect this unknown Drive file and
+rename it descriptively” in one request.
+
+## Analyzing tabular data
+
+`data_analyze_table` accepts local or Drive `.csv` and `.ods` file artifacts,
+as well as Grist document artifacts. It calculates data-quality indicators,
+descriptive statistics, correlations, and date-based trends, then creates a PDF
+report with charts under `LOCAL_FILES_ROOT` by default. HTML remains available
+when explicitly requested. The resulting artifact can be passed directly to
+`drive_upload_file`.
+
+Analysis is bounded by `DATA_ANALYSIS_MAX_SOURCE_BYTES`,
+`DATA_ANALYSIS_MAX_REPORT_BYTES`, and `DATA_ANALYSIS_MAX_ROWS`. The first usable
+Grist table or first ODS sheet is selected unless a Grist table ID is supplied.
 
 ## Importing CSV files into Grist
 

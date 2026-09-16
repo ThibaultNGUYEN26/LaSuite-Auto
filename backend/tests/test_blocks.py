@@ -42,7 +42,7 @@ class BlockDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(
             {block.name for block in blocks},
-            {"code", "drive", "grist", "local_files"},
+            {"code", "data_analysis", "drive", "grist", "local_files"},
         )
         drive = next(block for block in blocks if block.name == "drive")
         upload = next(
