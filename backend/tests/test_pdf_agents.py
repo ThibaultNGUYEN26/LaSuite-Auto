@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from fpdf import FPDF
 from pypdf import PdfReader
 
 from agent.artifact_store import MemoryArtifactStore
@@ -13,7 +14,40 @@ from agent.specialists.pdf import (
     PdfRenderAnalysisAgent,
     PdfRunScriptAgent,
 )
+from services.pdf import read_pdf_bytes
 from services.tabular_analysis import analyze_table
+
+
+class PdfReadTests(unittest.TestCase):
+    def test_preserves_page_numbers_for_grounded_answers(self):
+        pdf = FPDF()
+        pdf.set_font("Helvetica", size=12)
+        pdf.add_page()
+        pdf.cell(text="Revenue increased in 2025.")
+        pdf.add_page()
+        pdf.cell(text="The strongest region was North.")
+
+        result = read_pdf_bytes(bytes(pdf.output()), max_characters=10_000)
+
+        self.assertIn("[Page 1]\nRevenue increased in 2025.", result["content"])
+        self.assertIn("[Page 2]\nThe strongest region was North.", result["content"])
+        self.assertEqual(result["total_pages"], 2)
+        self.assertEqual(result["pages_with_text"], 2)
+        self.assertEqual(result["last_page_included"], 2)
+        self.assertFalse(result["truncated"])
+
+    def test_reports_the_last_available_page_when_text_is_truncated(self):
+        pdf = FPDF()
+        pdf.set_font("Helvetica", size=12)
+        pdf.add_page()
+        pdf.cell(text="First page content")
+        pdf.add_page()
+        pdf.cell(text="Second page content")
+
+        result = read_pdf_bytes(bytes(pdf.output()), max_characters=28)
+
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["last_page_included"], 1)
 
 
 class PdfCreateAgentTests(unittest.TestCase):
@@ -38,6 +72,30 @@ class PdfCreateAgentTests(unittest.TestCase):
             reader = PdfReader(str(target))
             self.assertEqual(len(reader.pages), 1)
             self.assertEqual(result["artifact"]["media_type"], "application/pdf")
+
+    def test_creates_a_pdf_with_unicode_text_and_typographic_hyphens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = PdfCreateAgent(root)
+
+            result = agent.execute(
+                {
+                    "directory": ".",
+                    "file_name": "rapport-francais",
+                    "title": "Résumé de l'étude",
+                    "body_text": "Évolution — coût non‑linéaire et œuvre analysée.",
+                },
+                DelegationContext(conversation=()),
+            )
+
+            target = root / "rapport-francais.pdf"
+            extracted = "".join(
+                page.extract_text() or "" for page in PdfReader(target).pages
+            )
+            self.assertEqual(result["status"], "created")
+            self.assertIn("Résumé de l'étude", extracted)
+            self.assertIn("coût non-linéaire", extracted)
+            self.assertIn("œuvre analysée", extracted)
 
     def test_never_overwrites_existing_file(self):
         with tempfile.TemporaryDirectory() as directory:

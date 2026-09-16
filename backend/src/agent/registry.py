@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from collections.abc import Iterable
 from typing import Any
 
@@ -43,6 +44,41 @@ class AgentRegistry:
 
         try:
             result = agent.execute(arguments, context)
+        except AgentError as exc:
+            return {"error": str(exc)}
+        if inspect.isawaitable(result):
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            return {
+                "error": (
+                    f"Specialist agent {name} is asynchronous; use async dispatch"
+                )
+            }
+        if not isinstance(result, dict):
+            return {"error": f"Specialist agent {name} returned an invalid result"}
+        return result
+
+    async def dispatch_async(
+        self, name: str, raw_arguments: str, context: DelegationContext
+    ) -> dict[str, Any]:
+        """Dispatch either a synchronous or asynchronous specialist."""
+        agent = self._agents.get(name)
+        if agent is None:
+            return {"error": f"Unknown specialist agent: {name}"}
+
+        try:
+            arguments = json.loads(raw_arguments or "{}")
+        except (json.JSONDecodeError, TypeError) as exc:
+            message = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
+            return {"error": f"Invalid agent arguments: {message}"}
+        if not isinstance(arguments, dict):
+            return {"error": "Agent arguments must be a JSON object"}
+
+        try:
+            result = agent.execute(arguments, context)
+            if inspect.isawaitable(result):
+                result = await result
         except AgentError as exc:
             return {"error": str(exc)}
         if not isinstance(result, dict):

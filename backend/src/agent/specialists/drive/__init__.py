@@ -10,6 +10,7 @@ from agent.specialists.drive.read_image import DriveReadImageAgent
 from agent.specialists.drive.read_pdf import DriveReadPdfAgent
 from agent.specialists.drive.read_text import DriveReadTextAgent
 from agent.specialists.drive.rename_file import DriveRenameFileAgent
+from agent.specialists.drive.search_pdfs import DriveSearchPdfsAgent
 from agent.specialists.drive.upload_file import DriveUploadFileAgent
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "DriveReadPdfAgent",
     "DriveReadTextAgent",
     "DriveRenameFileAgent",
+    "DriveSearchPdfsAgent",
     "DriveUploadFileAgent",
 ]

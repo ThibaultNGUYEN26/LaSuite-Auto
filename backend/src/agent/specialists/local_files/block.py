@@ -8,12 +8,17 @@ from agent.blocks import (
     WorkflowManifest,
 )
 from agent.specialists.local_files import (
+    LocalFilesComparePdfsAgent,
     LocalFilesCreateFileAgent,
     LocalFilesListItemsAgent,
     LocalFilesReadImageAgent,
     LocalFilesReadPdfAgent,
     LocalFilesReadTextAgent,
     LocalFilesRenameFileAgent,
+    LocalFilesSearchPdfsAgent,
+    LocalFilesSearchPdfMemoryAgent,
+    LocalFilesSummarizePdfAgent,
+    LocalFilesSummarizePdfsAgent,
 )
 from config import settings
 from services.image import AlbertImageAnalyzer
@@ -25,12 +30,20 @@ def create_block() -> AgentBlock:
         base_url=settings.albert_base_url,
         requested_model=settings.albert_vision_model,
     )
+    pdf_summarizer = LocalFilesSummarizePdfAgent(
+        settings.local_files_root,
+        api_key=settings.albert_api_key,
+        base_url=settings.albert_base_url,
+        requested_model=settings.albert_model,
+        max_read_bytes=settings.local_files_max_read_bytes,
+        max_pages=settings.pdf_search_max_pages,
+    )
     return AgentBlock(
         name="local_files",
         description=(
-            "Discover, read, create, and rename files below the configured local root. "
-            "Use it to locate an existing dataset by filename or subject before "
-            "another block analyzes or processes that file."
+            "Discover, search, read, create, and rename files below the configured "
+            "local root. Search page-level evidence across a folder of PDFs, or locate "
+            "an existing dataset before another block analyzes it."
         ),
         required_config=(ConfigRequirement("LOCAL_FILES_ROOT", required=True),),
         permissions=("local.read", "local.write"),
@@ -59,11 +72,49 @@ def create_block() -> AgentBlock:
             ),
             CapabilityManifest(
                 "local_files_read_pdf",
-                "Read selectable text from a local PDF.",
+                "Read page-labelled text from a local PDF for grounded analysis and follow-up questions.",
                 side_effect="local_read",
                 permissions=("local.read",),
                 accepts=(ArtifactContract("file", ("application/pdf",)),),
                 produces=(ArtifactContract("text", ("text/plain",)),),
+            ),
+            CapabilityManifest(
+                "local_files_search_pdfs",
+                "Search relevant pages across many local PDFs and return cited evidence.",
+                side_effect="local_read",
+                permissions=("local.read",),
+                produces=(ArtifactContract("document_matches", ("text/plain",)),),
+            ),
+            CapabilityManifest(
+                "local_files_summarize_pdf",
+                "Analyze every page of one local PDF and save a reusable Markdown memory.",
+                side_effect="local_write",
+                permissions=("local.read", "local.write", "model.generate"),
+                accepts=(ArtifactContract("file", ("application/pdf",)),),
+                produces=(ArtifactContract("file", ("text/markdown",)),),
+            ),
+            CapabilityManifest(
+                "local_files_summarize_pdfs",
+                "Create or refresh one reusable Markdown memory per PDF in a bounded batch.",
+                side_effect="local_write",
+                permissions=("local.read", "local.write", "model.generate"),
+                accepts=(ArtifactContract("file", ("application/pdf",)),),
+                produces=(ArtifactContract("file", ("text/markdown",)),),
+            ),
+            CapabilityManifest(
+                "local_files_compare_pdfs",
+                "Compare two local PDFs using both reusable memories and original-page evidence.",
+                side_effect="local_write",
+                permissions=("local.read", "local.write", "model.generate"),
+                accepts=(ArtifactContract("file", ("application/pdf",)),),
+                produces=(ArtifactContract("comparison", ("text/markdown",)),),
+            ),
+            CapabilityManifest(
+                "local_files_search_pdf_memory",
+                "Search saved PDF memories to identify original PDFs for a question.",
+                side_effect="local_read",
+                permissions=("local.read",),
+                produces=(ArtifactContract("document_matches", ("text/markdown",)),),
             ),
             CapabilityManifest(
                 "local_files_read_text",
@@ -85,8 +136,28 @@ def create_block() -> AgentBlock:
         workflows=(
             WorkflowManifest(
                 "local_files.read_pdf",
-                "Find a local PDF and read its content.",
+                "Find a local PDF and read page-labelled content for grounded answers.",
                 ("local_files_list_items", "local_files_read_pdf"),
+            ),
+            WorkflowManifest(
+                "local_files.answer_from_pdfs",
+                "Use saved memories to identify PDFs, then answer from cited page evidence.",
+                ("local_files_search_pdf_memory", "local_files_search_pdfs"),
+            ),
+            WorkflowManifest(
+                "local_files.remember_pdf",
+                "Analyze an entire local PDF and create a reusable Markdown memory.",
+                ("local_files_list_items", "local_files_summarize_pdf"),
+            ),
+            WorkflowManifest(
+                "local_files.remember_pdfs",
+                "Create independent reusable memories for a folder or list of PDFs.",
+                ("local_files_summarize_pdfs",),
+            ),
+            WorkflowManifest(
+                "local_files.compare_pdfs",
+                "Compare two PDFs from their full-document memories and cited original pages.",
+                ("local_files_compare_pdfs",),
             ),
         ),
         agents=(
@@ -101,6 +172,29 @@ def create_block() -> AgentBlock:
                 max_read_bytes=settings.local_files_max_read_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
             ),
+            LocalFilesSearchPdfsAgent(
+                settings.local_files_root,
+                max_read_bytes=settings.local_files_max_read_bytes,
+                max_files=settings.pdf_search_max_local_files,
+                max_total_pages=settings.pdf_search_max_pages,
+            ),
+            pdf_summarizer,
+            LocalFilesSummarizePdfsAgent(
+                settings.local_files_root,
+                pdf_summarizer,
+                max_files=settings.pdf_memory_max_batch_files,
+                concurrency=settings.pdf_memory_batch_concurrency,
+            ),
+            LocalFilesComparePdfsAgent(
+                settings.local_files_root,
+                pdf_summarizer,
+                api_key=settings.albert_api_key,
+                base_url=settings.albert_base_url,
+                requested_model=settings.albert_model,
+                max_read_bytes=settings.local_files_max_read_bytes,
+                max_total_pages=settings.pdf_search_max_pages,
+            ),
+            LocalFilesSearchPdfMemoryAgent(settings.local_files_root),
             LocalFilesReadTextAgent(
                 settings.local_files_root,
                 max_read_bytes=settings.local_files_max_read_bytes,

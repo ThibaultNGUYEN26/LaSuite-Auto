@@ -32,6 +32,14 @@ Copy `.env.example` to `.env` and adjust as needed:
 - `GRIST_ORG_ID` — organization identifier from the Grist URL; for `/o/docs/`,
   use `docs`.
 - `GRIST_WORKSPACE_ID` — optional default workspace where CSV imports are saved.
+- `PDF_SEARCH_MAX_LOCAL_FILES` / `PDF_SEARCH_MAX_DRIVE_FILES` — maximum PDFs
+  inspected by one corpus question. Defaults are 50 local files and 20 Drive files.
+- `PDF_SEARCH_MAX_PAGES` — maximum total pages indexed for one question. Extracted
+  pages are cached in backend memory and reused on later questions. It is also
+  the maximum size accepted by complete PDF-to-Markdown memory generation.
+- `PDF_MEMORY_MAX_BATCH_FILES` — maximum PDF memories created by one batch request.
+- `PDF_MEMORY_BATCH_CONCURRENCY` — number of PDFs summarized concurrently. Each PDF
+  still produces its own independent Markdown memory.
 
 ## Structure
 

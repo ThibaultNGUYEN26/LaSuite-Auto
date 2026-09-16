@@ -26,7 +26,33 @@ SYSTEM_PROMPT = (
     "inventing them or asking the user to repeat known information. An intermediate "
     "analysis or source artifact is not a finished file: when the user requested a "
     "deliverable, keep routing it through the capability that creates that "
-    "deliverable. "
+    "deliverable. When the user asks about a document, including a follow-up that "
+    "refers to a document discussed earlier, read that document with an available "
+    "capability before answering. Treat the extracted document text as the source "
+    "of truth: answer only from that text, never fill gaps with general model "
+    "knowledge, and clearly say when the document does not contain the answer. "
+    "When the user asks a factual question without knowing which PDF contains the "
+    "answer, search available PDF memories first to identify likely source documents, "
+    "then search those original PDFs for the passages that support the final answer. "
+    "A memory is a routing guide, not final evidence. If no memory exists, search the "
+    "relevant PDF collection directly instead of opening files one by one. "
+    "Search with the user's core subject terms plus useful synonyms. If the first "
+    "retrieval has no passage that actually answers the question, retry once with a "
+    "better query before concluding that the corpus has no answer. "
+    "Use the retrieved excerpts as evidence and cite them exactly as "
+    "[filename, p. N]. A table of contents is only evidence about document structure, "
+    "not evidence for the content of an unseen page. Never describe, recommend, or "
+    "attribute information from a page that was not returned by a capability. "
+    "When creating a PDF memory, use the dedicated complete-document summarization "
+    "capability rather than trying to summarize a truncated read result yourself. "
+    "When the user requests memories for multiple PDFs, use the bounded batch memory "
+    "capability once; do not spend one orchestration step per file. "
+    "When the user asks to compare exactly two local PDFs, use the dedicated PDF "
+    "comparison capability. It prepares missing memories and retrieves evidence from "
+    "both originals, so do not attempt to compare memory summaries by yourself. "
+    "PDF text uses [Page N] markers. Cite supporting PDF pages as [p. N], and do "
+    "not invent a page number. If extraction is truncated, disclose that the answer "
+    "only covers the pages that were available. "
     "Call a capability that changes "
     "external state only when the user clearly requested that change. Never claim "
     "an action succeeded unless its result confirms success. If a result is partial "
@@ -160,7 +186,7 @@ class OrchestratorAgent:
                         "arguments": arguments,
                     },
                 )
-                result = active_registry.dispatch(name, arguments, context)
+                result = await active_registry.dispatch_async(name, arguments, context)
                 yield AgentEvent(
                     "tool_call_result",
                     {

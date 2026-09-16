@@ -121,6 +121,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "drive_list_items",
                 "drive_read_image",
                 "drive_read_pdf",
+                "drive_search_pdfs",
                 "drive_read_text",
                 "drive_rename_file",
                 "drive_upload_file",
@@ -129,8 +130,13 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "grist_list_workspaces",
                 "local_files_list_items",
                 "local_files_create_file",
+                "local_files_compare_pdfs",
                 "local_files_read_image",
                 "local_files_read_pdf",
+                "local_files_search_pdfs",
+                "local_files_search_pdf_memory",
+                "local_files_summarize_pdf",
+                "local_files_summarize_pdfs",
                 "local_files_read_text",
                 "local_files_rename_file",
                 "run_python",
@@ -158,6 +164,10 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[-1].data, {"content": "Hello."})
         self.assertEqual(len(albert.requests), 1)
+        self.assertIn(
+            "Treat the extracted document text as the source of truth",
+            albert.requests[0]["messages"][0]["content"],
+        )
 
     @patch("agent.specialists.drive.config.get_drive_config")
     async def test_executes_drive_tool_and_returns_the_follow_up_answer(

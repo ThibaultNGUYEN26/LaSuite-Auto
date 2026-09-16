@@ -16,6 +16,7 @@ from agent.specialists.drive import (
     DriveReadPdfAgent,
     DriveReadTextAgent,
     DriveRenameFileAgent,
+    DriveSearchPdfsAgent,
     DriveUploadFileAgent,
 )
 from config import settings
@@ -30,7 +31,10 @@ def create_block() -> AgentBlock:
     )
     return AgentBlock(
         name="drive",
-        description="Discover, read, create, upload, and rename files in La Suite Drive.",
+        description=(
+            "Discover, search, read, create, upload, and rename files in La Suite "
+            "Drive, including page-level evidence search across many PDFs."
+        ),
         required_config=(
             ConfigRequirement("DRIVE_BASE_URL", required=True),
             ConfigRequirement("DRIVE_SESSION_ID", required=True, secret=True),
@@ -67,11 +71,18 @@ def create_block() -> AgentBlock:
             ),
             CapabilityManifest(
                 "drive_read_pdf",
-                "Read selectable text from a Drive PDF.",
+                "Read page-labelled text from a Drive PDF for grounded analysis and follow-up questions.",
                 side_effect="external_read",
                 permissions=("drive.read",),
                 accepts=(ArtifactContract("file", ("application/pdf",)),),
                 produces=(ArtifactContract("text", ("text/plain",)),),
+            ),
+            CapabilityManifest(
+                "drive_search_pdfs",
+                "Search relevant pages across many Drive PDFs and return cited evidence.",
+                side_effect="external_read",
+                permissions=("drive.read",),
+                produces=(ArtifactContract("document_matches", ("text/plain",)),),
             ),
             CapabilityManifest(
                 "drive_read_text",
@@ -109,8 +120,13 @@ def create_block() -> AgentBlock:
         workflows=(
             WorkflowManifest(
                 "drive.read_pdf",
-                "Find a PDF in Drive and read its content.",
+                "Find a PDF in Drive and read page-labelled content for grounded answers.",
                 ("drive_list_items", "drive_read_pdf"),
+            ),
+            WorkflowManifest(
+                "drive.answer_from_pdfs",
+                "Search a Drive PDF collection and answer from cited page evidence.",
+                ("drive_search_pdfs",),
             ),
         ),
         agents=(
@@ -139,6 +155,13 @@ def create_block() -> AgentBlock:
                 settings.drive_session_id,
                 max_download_bytes=settings.drive_max_download_bytes,
                 max_text_characters=settings.pdf_max_text_characters,
+            ),
+            DriveSearchPdfsAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                max_download_bytes=settings.drive_max_download_bytes,
+                max_files=settings.pdf_search_max_drive_files,
+                max_total_pages=settings.pdf_search_max_pages,
             ),
             DriveReadTextAgent(
                 settings.drive_base_url,

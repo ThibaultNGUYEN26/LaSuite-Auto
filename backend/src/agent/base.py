@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from collections.abc import Awaitable
 from typing import Any, Sequence
 
 from schemas import ChatMessage
@@ -37,5 +38,5 @@ class SpecialistAgent(ABC):
     @abstractmethod
     def execute(
         self, arguments: dict[str, Any], context: DelegationContext
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | Awaitable[dict[str, Any]]:
         """Execute one delegation and return JSON-serializable data."""

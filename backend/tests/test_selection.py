@@ -116,6 +116,10 @@ class BlockSelectionTests(unittest.IsolatedAsyncioTestCase):
             "intended outcome in any language",
             client.requests[0]["messages"][0]["content"],
         )
+        self.assertIn(
+            "follow-up question about a file or document",
+            client.requests[0]["messages"][0]["content"],
+        )
 
     async def test_missing_selection_no_longer_raises_backend_error(self):
         client = FakeSelectionClient([{}, {}])
