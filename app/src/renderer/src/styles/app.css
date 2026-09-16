@@ -7,7 +7,7 @@ body {
   align-items: center;
   gap: var(--c--globals--spacings--xs, 8px);
   font-weight: 700;
-  font-size: var(--c--theme--font--sizes--md, 1rem);
+  font-size: var(--c--globals--font--sizes--md, 1rem);
 }
 
 .app-logo__icon {

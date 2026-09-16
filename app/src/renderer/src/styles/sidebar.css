@@ -1,0 +1,88 @@
+/* Shared layout for left-panel sections (conversation list, workflow list, …).
+   One set of classes instead of a per-feature stylesheet. */
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--c--globals--spacings--sm);
+  gap: 2px;
+}
+
+.sidebar-section:first-child {
+  padding-top: var(--c--globals--spacings--sm);
+}
+
+.sidebar-heading {
+  padding: var(--c--globals--spacings--sm) var(--c--globals--spacings--sm) 0;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  font-size: var(--c--globals--font--sizes--xs);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.sidebar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs) var(--c--globals--spacings--sm);
+  border: none;
+  border-radius: var(--c--globals--spacings--xs);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.sidebar-row:hover,
+.sidebar-row:focus-visible {
+  background-color: var(--c--contextuals--background--semantic--overlay--primary);
+}
+
+.sidebar-row:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sidebar-row-text {
+  min-width: 0;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: inherit;
+  text-align: left;
+}
+
+.sidebar-row-title {
+  font-size: var(--c--globals--font--sizes--md);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-row-subtitle {
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  font-size: var(--c--globals--font--sizes--xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-row-icon {
+  display: flex;
+  align-items: center;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  flex-shrink: 0;
+}
+
+.sidebar-row-action {
+  display: none;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-row:hover .sidebar-row-action {
+  display: flex;
+}

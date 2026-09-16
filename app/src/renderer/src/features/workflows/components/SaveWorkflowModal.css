@@ -6,6 +6,6 @@
 
 .save-workflow-form__error {
   color: var(--c--contextuals--content--semantic--error--primary);
-  font-size: var(--c--theme--font--sizes--xs);
+  font-size: var(--c--globals--font--sizes--xs);
   margin: 0;
 }

@@ -83,7 +83,7 @@
 }
 
 .chat-message-time {
-  font-size: var(--c--theme--font--sizes--xs);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
   padding: 0 4px;
   margin-bottom: 4px;
@@ -176,7 +176,7 @@
 
 .chat-trace-entry {
   list-style: none;
-  font-size: var(--c--theme--font--sizes--xs);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
 
@@ -222,7 +222,7 @@
   padding: 0;
   border: none;
   background: none;
-  font-size: var(--c--theme--font--sizes--xs);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--info--primary);
   cursor: pointer;
 }

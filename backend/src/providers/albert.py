@@ -1,7 +1,4 @@
-"""Client for Albert's OpenAI-compatible API."""
-
 from __future__ import annotations
-
 import json
 import ssl
 from collections.abc import AsyncIterator

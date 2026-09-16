@@ -41,3 +41,16 @@ class WorkflowOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SpecialistToolOut(BaseModel):
+    name: str
+    description: str
+
+
+class AgentSpecializationOut(BaseModel):
+    id: str
+    name: str
+    description: str
+    enabled: bool
+    tools: list[SpecialistToolOut]

@@ -1,7 +1,6 @@
 import { HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
 import { useEffect, useState } from 'react'
 import { deleteWorkflow, listWorkflows, type Workflow } from '../api/workflows'
-import './WorkflowList.css'
 
 type WorkflowListProps = {
   refreshKey: number
@@ -37,39 +36,39 @@ function WorkflowList({ refreshKey, onLaunch }: WorkflowListProps): React.JSX.El
   if (workflows.length === 0) return <></>
 
   return (
-    <div className="workflow-list">
-      <HorizontalSeparator />
-      <div className="workflow-list-heading">Workflows</div>
-      <div className="workflow-list-items">
-        {workflows.map((workflow) => (
-          <div
-            key={workflow.id}
-            className="workflow-list-item"
-            role="button"
-            tabIndex={0}
-            onClick={() => onLaunch(workflow)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onLaunch(workflow)
+    <div className="sidebar-section">
+      <div className="sidebar-divider">
+        <HorizontalSeparator />
+      </div>
+      <div className="sidebar-heading">Workflows</div>
+      {workflows.map((workflow) => (
+        <div
+          key={workflow.id}
+          className="sidebar-row"
+          role="button"
+          tabIndex={0}
+          onClick={() => onLaunch(workflow)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onLaunch(workflow)
+          }}
+        >
+          <div className="sidebar-row-text">
+            <div className="sidebar-row-title">{workflow.name}</div>
+            <div className="sidebar-row-subtitle">{workflow.description}</div>
+          </div>
+          <button
+            type="button"
+            className="sidebar-row-action"
+            aria-label={`Delete ${workflow.name}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              void handleDelete(workflow.id)
             }}
           >
-            <div className="workflow-list-item-text">
-              <div className="workflow-list-item-title">{workflow.name}</div>
-              <div className="workflow-list-item-subtitle">{workflow.description}</div>
-            </div>
-            <button
-              type="button"
-              className="workflow-list-item-delete"
-              aria-label={`Delete ${workflow.name}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                void handleDelete(workflow.id)
-              }}
-            >
-              <Icon name="delete" size={IconSize.SMALL} />
-            </button>
-          </div>
-        ))}
-      </div>
+            <Icon name="delete" size={IconSize.SMALL} />
+          </button>
+        </div>
+      ))}
     </div>
   )
 }
