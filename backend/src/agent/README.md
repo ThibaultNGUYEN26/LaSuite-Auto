@@ -73,6 +73,37 @@ or `Desktop` with the `directory` argument.
 memory, and uses the same text extractor as the Drive specialist. Absolute
 paths and paths that escape the configured root are rejected.
 
+## Durable PDF memories
+
+`local_files_summarize_pdf` reads every extractable page of one local PDF using
+bounded map/reduce model calls. It creates a page-cited Markdown memory under
+`LOCAL_FILES_ROOT/memory/`, gives the file a title derived from its contents,
+and includes a relative link to the original PDF. Re-running it for the same
+source refreshes the managed memory instead of creating duplicates.
+
+For later questions, `local_files_search_pdf_memory` searches those compact
+memories first and returns likely source PDF paths. The orchestrator then passes
+those paths to `local_files_search_pdfs`, which retrieves the actual supporting
+pages. The memory is therefore a routing index; final factual answers remain
+grounded in the original PDF excerpts.
+
+`PDF_SEARCH_MAX_PAGES` is a completeness boundary. A PDF above that limit is
+rejected rather than silently summarized only in part.
+
+`local_files_summarize_pdfs` performs the same operation for either an explicit
+list of PDFs or every PDF in a selected folder. It creates one memory per source,
+skips unchanged memories by default, isolates per-file failures, and reports
+created, updated, skipped, and failed counts. It never merges unrelated PDFs
+into one summary. `PDF_MEMORY_MAX_BATCH_FILES` bounds one request and
+`PDF_MEMORY_BATCH_CONCURRENCY` controls parallel document processing.
+
+`local_files_compare_pdfs` compares exactly two PDFs. It creates or refreshes each
+document's memory when needed, uses those memories to plan meaningful comparison
+dimensions, and then retrieves the supporting pages from both original PDFs. The
+result separates agreements, differences, contradictions, and unique coverage, with
+citations such as `[contract-a.pdf, p. 4]`. Memories guide retrieval but are never
+treated as final evidence.
+
 ## Reading images
 
 `drive_read_image` and `local_files_read_image` load PNG, JPEG, GIF, or WebP

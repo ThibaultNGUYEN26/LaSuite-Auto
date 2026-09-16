@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from fastapi.testclient import TestClient
 
@@ -85,6 +85,50 @@ class NewConversationEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class ConversationTitleEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_returns_a_generated_title(self):
+        async def title_generator(prompt, response):
+            self.assertEqual(prompt, "Analyse these figures")
+            self.assertEqual(response, "Sales increased by 12%")
+            return "Sales trend analysis"
+
+        with patch("main.generate_chat_title", title_generator):
+            response = self.client.post(
+                "/api/conversations/title",
+                json={
+                    "prompt": "Analyse these figures",
+                    "response": "Sales increased by 12%",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"title": "Sales trend analysis"})
+
+    def test_persists_the_title_when_a_chat_id_is_supplied(self):
+        async def title_generator(prompt, response):
+            return "Sales trend analysis"
+
+        with patch("main.generate_chat_title", title_generator), patch(
+            "main.chat_repository.rename", return_value=object()
+        ) as rename:
+            response = self.client.post(
+                "/api/conversations/title",
+                json={
+                    "chat_id": "conversation-1",
+                    "prompt": "Analyse these figures",
+                    "response": "Sales increased by 12%",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        rename.assert_called_once_with(
+            ANY, "conversation-1", "Sales trend analysis"
+        )
 
 
 if __name__ == "__main__":

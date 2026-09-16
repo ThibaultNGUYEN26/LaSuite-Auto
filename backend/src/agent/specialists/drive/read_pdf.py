@@ -14,6 +14,8 @@ class DriveReadPdfAgent(SpecialistAgent):
     name = "drive_read_pdf"
     description = (
         "Download a PDF from La Suite Drive into backend memory and read its text. "
+        "The extracted text contains [Page N] markers for grounded answers and page "
+        "citations. Use this again for follow-up questions about that PDF. "
         "The item_id is the Drive file UUID returned by drive_list_items. This is "
         "read-only and does not save the PDF on disk."
     )

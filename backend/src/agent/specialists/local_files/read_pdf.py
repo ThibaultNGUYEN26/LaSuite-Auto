@@ -14,7 +14,9 @@ class LocalFilesReadPdfAgent(SpecialistAgent):
     description = (
         "Read a PDF stored on this computer under the configured local-files root "
         "(normally the user's home folder). Use the relative_path returned by "
-        "local_files_list_items. Do not use this for a file in La Suite Drive."
+        "local_files_list_items. The extracted text contains [Page N] markers for "
+        "grounded answers and page citations. Use this again for follow-up questions "
+        "about that PDF. Do not use this for a file in La Suite Drive."
     )
     parameters: dict[str, Any] = {
         "type": "object",

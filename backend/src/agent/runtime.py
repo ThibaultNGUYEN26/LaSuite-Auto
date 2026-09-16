@@ -13,24 +13,35 @@ from config import settings
 from providers.albert import AlbertClient
 from providers.echo import EchoProvider
 from schemas import ChatMessage, WorkflowDraft
+from services.chat_title import fallback_title, generate_title
 
 
 _echo_provider = EchoProvider()
+_albert_client: AlbertClient | None = None
+_resolved_albert_model: str | None = None
 _albert_agent: OrchestratorAgent | None = None
+
+
+def _get_albert_client() -> tuple[AlbertClient, str]:
+    global _albert_client, _resolved_albert_model
+    if _albert_client is not None and _resolved_albert_model is not None:
+        return _albert_client, _resolved_albert_model
+    if not settings.albert_api_key:
+        raise AgentError("Set ALBERT_API_KEY before using the Albert provider")
+
+    _albert_client = AlbertClient(
+        settings.albert_api_key,
+        base_url=settings.albert_base_url,
+    )
+    _resolved_albert_model = _albert_client.resolve_model(settings.albert_model)
+    return _albert_client, _resolved_albert_model
 
 
 def _get_albert_agent() -> OrchestratorAgent:
     global _albert_agent
     if _albert_agent is not None:
         return _albert_agent
-    if not settings.albert_api_key:
-        raise AgentError("Set ALBERT_API_KEY before using the Albert provider")
-
-    albert = AlbertClient(
-        settings.albert_api_key,
-        base_url=settings.albert_base_url,
-    )
-    model = albert.resolve_model(settings.albert_model)
+    albert, model = _get_albert_client()
     _albert_agent = OrchestratorAgent(
         albert,
         model=model,
@@ -64,3 +75,18 @@ async def draft_workflow_from_messages(messages: list[ChatMessage]) -> WorkflowD
             messages, albert=None, model=None
         )
     return suggestion.draft
+
+
+async def generate_chat_title(prompt: str, response: str) -> str:
+    """Create a short title without involving capability selection or tools."""
+    if settings.provider == "echo":
+        return fallback_title(prompt)
+    if settings.provider == "albert":
+        albert, model = _get_albert_client()
+        return await generate_title(
+            prompt,
+            response,
+            albert=albert,
+            model=model,
+        )
+    raise AgentError(f"Unknown AUTO_PROVIDER: {settings.provider}")

@@ -54,6 +54,21 @@ class Settings:
     pdf_max_text_characters: int = int(
         os.environ.get("PDF_MAX_TEXT_CHARACTERS", "80000")
     )
+    pdf_search_max_local_files: int = int(
+        os.environ.get("PDF_SEARCH_MAX_LOCAL_FILES", "50")
+    )
+    pdf_search_max_drive_files: int = int(
+        os.environ.get("PDF_SEARCH_MAX_DRIVE_FILES", "20")
+    )
+    pdf_search_max_pages: int = int(
+        os.environ.get("PDF_SEARCH_MAX_PAGES", "2000")
+    )
+    pdf_memory_max_batch_files: int = int(
+        os.environ.get("PDF_MEMORY_MAX_BATCH_FILES", "20")
+    )
+    pdf_memory_batch_concurrency: int = int(
+        os.environ.get("PDF_MEMORY_BATCH_CONCURRENCY", "2")
+    )
     text_max_characters: int = int(
         os.environ.get("TEXT_MAX_CHARACTERS", "100000")
     )

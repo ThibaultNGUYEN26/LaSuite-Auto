@@ -32,6 +32,14 @@ Copy `.env.example` to `.env` and adjust as needed:
 - `GRIST_ORG_ID` — organization identifier from the Grist URL; for `/o/docs/`,
   use `docs`.
 - `GRIST_WORKSPACE_ID` — optional default workspace where CSV imports are saved.
+- `PDF_SEARCH_MAX_LOCAL_FILES` / `PDF_SEARCH_MAX_DRIVE_FILES` — maximum PDFs
+  inspected by one corpus question. Defaults are 50 local files and 20 Drive files.
+- `PDF_SEARCH_MAX_PAGES` — maximum total pages indexed for one question. Extracted
+  pages are cached in backend memory and reused on later questions. It is also
+  the maximum size accepted by complete PDF-to-Markdown memory generation.
+- `PDF_MEMORY_MAX_BATCH_FILES` — maximum PDF memories created by one batch request.
+- `PDF_MEMORY_BATCH_CONCURRENCY` — number of PDFs summarized concurrently. Each PDF
+  still produces its own independent Markdown memory.
 
 ## Structure
 
@@ -100,3 +108,30 @@ curl -s http://127.0.0.1:8000/api/chat \
 The Electron renderer sends this same POST request. Its backend URL defaults to
 `http://127.0.0.1:8000`; copy `app/.env.example` to `app/.env` to override
 `VITE_BACKEND_URL` when needed.
+
+## Generate a conversation title
+
+After the first assistant response is complete, the frontend can generate a
+short title from the first exchange:
+
+```http
+POST /api/conversations/title
+Content-Type: application/json
+
+{
+  "chat_id": "optional-conversation-id",
+  "prompt": "Analyse the sales figures for this quarter",
+  "response": "Sales increased by 12% compared with last quarter."
+}
+```
+
+The response is:
+
+```json
+{
+  "title": "Quarterly sales trend"
+}
+```
+
+When `chat_id` is provided, the backend also saves the generated title on that
+conversation. Without it, the endpoint only returns the title.
