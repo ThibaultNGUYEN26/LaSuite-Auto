@@ -45,6 +45,13 @@ function App(): React.JSX.Element {
                 setSelectedConversation(conversation)
                 setActiveWorkflow(null)
               }}
+              onDeleteConversation={(id) => {
+                setSelectedConversation((current) => {
+                  if (current?.id !== id) return current
+                  setConversationKey((key) => key + 1)
+                  return null
+                })
+              }}
             />
             <WorkflowList
               refreshKey={workflowsVersion}

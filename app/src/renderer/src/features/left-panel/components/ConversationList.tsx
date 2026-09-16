@@ -1,13 +1,14 @@
 import { HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
 import { useEffect, useState } from 'react'
 import { createConversation } from '../api/createConversation'
-import { listConversations, type SavedConversation } from '../api/conversations'
+import { deleteConversation, listConversations, type SavedConversation } from '../api/conversations'
 
 type ConversationListProps = {
   refreshKey: number
   selectedConversationId: string | null
   onNewConversation: () => void
   onSelectConversation: (conversation: SavedConversation) => void
+  onDeleteConversation: (id: string) => void
 }
 
 function formatDate(value: string): string {
@@ -18,7 +19,8 @@ function ConversationList({
   refreshKey,
   selectedConversationId,
   onNewConversation,
-  onSelectConversation
+  onSelectConversation,
+  onDeleteConversation
 }: ConversationListProps): React.JSX.Element {
   const [isCreating, setIsCreating] = useState(false)
   const [conversations, setConversations] = useState<SavedConversation[]>([])
@@ -30,6 +32,16 @@ function ConversationList({
   useEffect(() => {
     refreshConversations()
   }, [refreshKey])
+
+  const handleDelete = async (id: string): Promise<void> => {
+    setConversations((current) => current.filter((c) => c.id !== id))
+    onDeleteConversation(id)
+    try {
+      await deleteConversation(id)
+    } catch {
+      // Best-effort: if the delete failed the next refresh will restore it.
+    }
+  }
 
   const handleNewConversation = async (): Promise<void> => {
     setIsCreating(true)
@@ -61,18 +73,33 @@ function ConversationList({
       </button>
       <HorizontalSeparator />
       {conversations.map((conversation) => (
-        <button
+        <div
           key={conversation.id}
-          type="button"
           className="sidebar-row"
+          role="button"
+          tabIndex={0}
           data-active={conversation.id === selectedConversationId}
           onClick={() => onSelectConversation(conversation)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onSelectConversation(conversation)
+          }}
         >
           <span className="sidebar-row-text">
             <span className="sidebar-row-title">{conversation.title}</span>
             <span className="sidebar-row-subtitle">{formatDate(conversation.updated_at)}</span>
           </span>
-        </button>
+          <button
+            type="button"
+            className="sidebar-row-action"
+            aria-label={`Delete ${conversation.title}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              void handleDelete(conversation.id)
+            }}
+          >
+            <Icon name="delete" size={IconSize.SMALL} />
+          </button>
+        </div>
       ))}
     </div>
   )

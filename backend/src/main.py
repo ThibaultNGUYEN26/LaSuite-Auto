@@ -57,6 +57,13 @@ def list_conversations(db: Session = Depends(get_db)) -> list[ChatRead]:
     return [ChatRead.model_validate(chat) for chat in chat_repository.list_all(db)]
 
 
+@app.delete("/api/conversations/{chat_id}")
+def delete_conversation(chat_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
+    if not chat_repository.delete(db, chat_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "ok"}
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(
     request: ChatRequest,

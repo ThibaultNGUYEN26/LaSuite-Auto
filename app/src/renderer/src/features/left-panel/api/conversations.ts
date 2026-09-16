@@ -16,3 +16,11 @@ export async function listConversations(): Promise<SavedConversation[]> {
   }
   return response.json() as Promise<SavedConversation[]>
 }
+
+export async function deleteConversation(id: string): Promise<void> {
+  const response = await fetch(`${BACKEND_URL}/api/conversations/${id}`, { method: 'DELETE' })
+  if (!response.ok) {
+    const error = await response.text().catch(() => '')
+    throw new Error(`backend responded with ${response.status}${error ? `: ${error}` : ''}`)
+  }
+}
