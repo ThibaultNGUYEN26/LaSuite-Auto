@@ -1,19 +1,33 @@
 import { HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createConversation } from '../api/createConversation'
-
-const PLACEHOLDER_CONVERSATIONS = [
-  { id: '1', title: 'Trip planning ideas', subtitle: 'Yesterday' },
-  { id: '2', title: 'Debugging the API client', subtitle: '2 days ago' },
-  { id: '3', title: 'Draft project README', subtitle: 'Last week' }
-]
+import { listConversations, type SavedConversation } from '../api/conversations'
 
 type ConversationListProps = {
+  refreshKey: number
   onNewConversation: () => void
+  onSelectConversation: (conversation: SavedConversation) => void
 }
 
-function ConversationList({ onNewConversation }: ConversationListProps): React.JSX.Element {
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value))
+}
+
+function ConversationList({
+  refreshKey,
+  onNewConversation,
+  onSelectConversation
+}: ConversationListProps): React.JSX.Element {
   const [isCreating, setIsCreating] = useState(false)
+  const [conversations, setConversations] = useState<SavedConversation[]>([])
+
+  const refreshConversations = (): void => {
+    listConversations().then(setConversations).catch(() => setConversations([]))
+  }
+
+  useEffect(() => {
+    refreshConversations()
+  }, [refreshKey])
 
   const handleNewConversation = async (): Promise<void> => {
     setIsCreating(true)
@@ -24,6 +38,7 @@ function ConversationList({ onNewConversation }: ConversationListProps): React.J
       // block starting a fresh conversation locally.
     } finally {
       setIsCreating(false)
+      refreshConversations()
       onNewConversation()
     }
   }
@@ -42,17 +57,22 @@ function ConversationList({ onNewConversation }: ConversationListProps): React.J
         </span>
         <span className="sidebar-row-text sidebar-row-title">New conversation</span>
       </button>
-      <div className="sidebar-divider">
-        <HorizontalSeparator />
+      <HorizontalSeparator />
+      <div className="conversation-list-items">
+        {conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            type="button"
+            className="conversation-list-item"
+            onClick={() => onSelectConversation(conversation)}
+          >
+            <div className="conversation-list-item-title">{conversation.title}</div>
+            <div className="conversation-list-item-subtitle">
+              {formatDate(conversation.updated_at)}
+            </div>
+          </button>
+        ))}
       </div>
-      {PLACEHOLDER_CONVERSATIONS.map((conversation) => (
-        <div key={conversation.id} className="sidebar-row">
-          <div className="sidebar-row-text">
-            <div className="sidebar-row-title">{conversation.title}</div>
-            <div className="sidebar-row-subtitle">{conversation.subtitle}</div>
-          </div>
-        </div>
-      ))}
     </div>
   )
 }

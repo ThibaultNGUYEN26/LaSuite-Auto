@@ -38,6 +38,27 @@ class ChatStreamEndpointTests(unittest.TestCase):
         self.assertEqual(events[-1][0], "final")
         self.assertIn("Hi there", events[-1][1])
 
+    async def _yield_final_event(self, messages):
+        yield AgentEvent("final", {"content": "Answer now"})
+
+    def test_persists_the_assistant_response_when_stream_finishes(self):
+        with patch("main.run_stream", self._yield_final_event), patch(
+            "main.chat_repository.save_history"
+        ) as save_history:
+            response = self.client.post(
+                "/api/chat/stream",
+                json={
+                    "chat_id": "conversation-1",
+                    "messages": [{"role": "user", "content": "Question"}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(save_history.call_count, 2)
+        persisted_messages = save_history.call_args_list[-1].args[2]
+        self.assertEqual(persisted_messages[-1].role, "assistant")
+        self.assertEqual(persisted_messages[-1].content, "Answer now")
+
     async def _raise_agent_error(self, messages):
         raise AgentError("boom")
         yield AgentEvent("unreachable", {})  # pragma: no cover - makes this a generator
