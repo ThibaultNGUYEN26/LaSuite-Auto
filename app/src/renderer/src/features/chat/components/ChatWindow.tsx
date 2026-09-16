@@ -1,14 +1,46 @@
+import { VariantType } from '@gouvfr-lasuite/cunningham-react'
+import { Alert, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { streamChatMessage } from '../api/streamChatMessage'
-import type { ChatMessage, StreamEvent } from '../types'
+import { applyStreamEvent } from '../utils/applyStreamEvent'
+import type { ChatMessage, StreamEvent, WorkflowDraft } from '../types'
+import { draftWorkflow, type Workflow } from '../../workflows/api/workflows'
+import SaveWorkflowModal from '../../workflows/components/SaveWorkflowModal'
 import './ChatWindow.css'
 import Composer from './Composer'
 import MessageList from './MessageList'
 
-function ChatWindow(): React.JSX.Element {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+function seedMessages(workflow: Workflow | undefined): ChatMessage[] {
+  if (!workflow) return []
+  return [
+    {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: workflow.instructions,
+      createdAt: Date.now(),
+      hidden: true
+    },
+    {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: workflow.input_question,
+      createdAt: Date.now()
+    }
+  ]
+}
+
+type ChatWindowProps = {
+  workflow?: Workflow
+  onWorkflowSaved?: () => void
+}
+
+function ChatWindow({ workflow, onWorkflowSaved }: ChatWindowProps): React.JSX.Element {
+  const [messages, setMessages] = useState<ChatMessage[]>(() => seedMessages(workflow))
   const [input, setInput] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [suggestion, setSuggestion] = useState<WorkflowDraft | null>(null)
+  const [draftForSave, setDraftForSave] = useState<WorkflowDraft | null>(null)
+  const [isDraftingManually, setIsDraftingManually] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -47,90 +79,18 @@ function ChatWindow(): React.JSX.Element {
     setMessages([...nextMessages, assistantMessage])
     setInput('')
     setIsSending(true)
+    setSuggestion(null)
 
     const askedAt = Date.now()
 
     const onEvent = (event: StreamEvent): void => {
-      switch (event.type) {
-        case 'step_start':
-          setMessages((current) =>
-            current.map((m) =>
-              m.id === assistantMessage.id
-                ? {
-                    ...m,
-                    status: `Thinking (step ${event.data.step})…`,
-                    trace: [...(m.trace ?? []), { type: 'step', step: event.data.step }]
-                  }
-                : m
-            )
-          )
-          break
-        case 'token':
-          setMessages((current) =>
-            current.map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, content: m.content + event.data.delta, status: undefined }
-                : m
-            )
-          )
-          break
-        case 'tool_call_start':
-          setMessages((current) =>
-            current.map((m) =>
-              m.id === assistantMessage.id
-                ? {
-                    ...m,
-                    status: `Calling ${event.data.name}…`,
-                    trace: [
-                      ...(m.trace ?? []),
-                      {
-                        type: 'tool_call',
-                        toolCallId: event.data.tool_call_id,
-                        step: event.data.step,
-                        name: event.data.name,
-                        arguments: event.data.arguments
-                      }
-                    ]
-                  }
-                : m
-            )
-          )
-          break
-        case 'tool_call_result':
-          setMessages((current) =>
-            current.map((m) =>
-              m.id === assistantMessage.id
-                ? {
-                    ...m,
-                    trace: (m.trace ?? []).map((entry) =>
-                      entry.type === 'tool_call' && entry.toolCallId === event.data.tool_call_id
-                        ? { ...entry, result: event.data.result }
-                        : entry
-                    )
-                  }
-                : m
-            )
-          )
-          break
-        case 'step_complete':
-          break
-        case 'final':
-          patchMessage(assistantMessage.id, {
-            content: event.data.content,
-            status: undefined,
-            streaming: false,
-            thinkingMs: Date.now() - askedAt
-          })
-          break
-        case 'error':
-          patchMessage(assistantMessage.id, {
-            content: `Something went wrong: ${event.data.message}`,
-            status: undefined,
-            streaming: false,
-            thinkingMs: Date.now() - askedAt
-          })
-          break
+      if (event.type === 'workflow_suggested') {
+        setSuggestion(event.data)
+        return
       }
+      setMessages((current) =>
+        current.map((m) => (m.id === assistantMessage.id ? applyStreamEvent(m, event, askedAt) : m))
+      )
     }
 
     try {
@@ -148,12 +108,68 @@ function ChatWindow(): React.JSX.Element {
     }
   }
 
+  const handleSaveAsWorkflow = async (): Promise<void> => {
+    if (messages.length === 0 || isDraftingManually) return
+    setIsDraftingManually(true)
+    try {
+      const draft = await draftWorkflow(messages)
+      setDraftForSave(draft)
+    } catch {
+      // Drafting is a convenience; a failure here shouldn't interrupt the chat.
+    } finally {
+      setIsDraftingManually(false)
+    }
+  }
+
   return (
     <div className="chat-wrapper">
       <div className="chat">
+        {workflow ? (
+          <Alert
+            className="workflow-active-banner"
+            type={VariantType.INFO}
+            icon={<Icon name="bolt" size={IconSize.SMALL} />}
+          >
+            Running workflow: <strong>{workflow.name}</strong>
+          </Alert>
+        ) : null}
         <MessageList messages={messages} isSending={isSending} />
-        <Composer value={input} onChange={setInput} onSubmit={handleSubmit} canSubmit={canSubmit} />
+        {suggestion ? (
+          <Alert
+            className="workflow-suggestion"
+            type={VariantType.INFO}
+            canClose
+            onClose={() => setSuggestion(null)}
+            primaryLabel="Save"
+            primaryOnClick={() => {
+              setDraftForSave(suggestion)
+              setSuggestion(null)
+            }}
+            tertiaryLabel="Dismiss"
+            tertiaryOnClick={() => setSuggestion(null)}
+          >
+            <strong>Save this as a workflow?</strong> {suggestion.name} — {suggestion.description}
+          </Alert>
+        ) : null}
+        <Composer
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          canSubmit={canSubmit}
+          onSaveAsWorkflow={messages.length > 0 ? handleSaveAsWorkflow : undefined}
+          isSavingWorkflow={isDraftingManually}
+        />
       </div>
+      {draftForSave ? (
+        <SaveWorkflowModal
+          draft={draftForSave}
+          onClose={() => setDraftForSave(null)}
+          onSaved={() => {
+            setDraftForSave(null)
+            onWorkflowSaved?.()
+          }}
+        />
+      ) : null}
     </div>
   )
 }

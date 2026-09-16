@@ -1,12 +1,15 @@
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from agent.errors import AgentError
 from agent.events import AgentEvent
-from agent.orchestrator import run_stream
+from agent.orchestrator import draft_workflow_from_messages, run_stream
 from config import settings
-from schemas import ChatRequest
+from db import get_db, init_db
+from repositories import workflow_repository
+from schemas import ChatRequest, WorkflowCreate, WorkflowDraftRequest, WorkflowOut
 
 app = FastAPI(title="Auto backend")
 
@@ -16,6 +19,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
 
 
 @app.get("/api/health")
@@ -59,3 +67,35 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/workflows/draft")
+async def draft_workflow_route(request: WorkflowDraftRequest) -> dict[str, str]:
+    try:
+        draft = await draft_workflow_from_messages(request.messages)
+    except AgentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return draft.model_dump()
+
+
+@app.get("/api/workflows")
+def list_workflows(db: Session = Depends(get_db)) -> list[WorkflowOut]:
+    return [
+        WorkflowOut.model_validate(workflow)
+        for workflow in workflow_repository.list_all(db)
+    ]
+
+
+@app.post("/api/workflows")
+def create_workflow(
+    body: WorkflowCreate, db: Session = Depends(get_db)
+) -> WorkflowOut:
+    workflow = workflow_repository.create(db, body)
+    return WorkflowOut.model_validate(workflow)
+
+
+@app.delete("/api/workflows/{workflow_id}")
+def delete_workflow(workflow_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
+    if not workflow_repository.delete(db, workflow_id):
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {"status": "ok"}

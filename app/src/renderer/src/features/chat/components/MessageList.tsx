@@ -91,7 +91,9 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
     return () => clearInterval(interval)
   }, [])
 
-  if (messages.length === 0 && !isSending) {
+  const visibleMessages = messages.filter((message) => !message.hidden)
+
+  if (visibleMessages.length === 0 && !isSending) {
     return (
       <div className="chat-messages">
         <div className="chat-empty-state">
@@ -109,7 +111,7 @@ function MessageList({ messages, isSending }: MessageListProps): React.JSX.Eleme
 
   return (
     <div className="chat-messages">
-      {messages.map((message) => (
+      {visibleMessages.map((message) => (
         <div key={message.id} className="chat-message-row" data-role={message.role}>
           <div className="chat-message-group">
             <span className="chat-message-time">

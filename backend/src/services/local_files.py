@@ -86,7 +86,13 @@ def list_local_items(
     while pending and len(items) < limit:
         directory, depth = pending.popleft()
         try:
-            children = sorted(directory.iterdir(), key=lambda path: path.name.casefold())
+            def _mtime_or_zero(path: Path) -> float:
+                try:
+                    return path.stat().st_mtime
+                except OSError:
+                    return 0.0
+
+            children = sorted(directory.iterdir(), key=_mtime_or_zero, reverse=True)
         except PermissionError:
             continue
         for child in children:
