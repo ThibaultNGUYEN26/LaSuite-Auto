@@ -16,8 +16,8 @@ class RunPythonAgent(SpecialistAgent):
         "stdout, stderr, and exit code. Use this for calculations, data processing, "
         "or checking what a piece of Python code does. The snippet has no access to "
         "the conversation, La Suite Drive, or local files unless it opens them itself. "
-        "It runs in the app's own Python environment, so app-installed packages such "
-        "as pypdf or reportlab are available to import."
+        "For PDF creation, templating, or scripted PDF edits, use the pdf block's "
+        "tools instead."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -54,9 +54,9 @@ class RunPythonFileAgent(SpecialistAgent):
     name = "run_python_file"
     description = (
         "Run a Python file in an isolated subprocess. The file must be inside the "
-        "configured local-files root. Return its stdout, stderr, and exit code. It "
-        "runs in the app's own Python environment, so app-installed packages such as "
-        "pypdf or reportlab are available to import."
+        "configured local-files root. Return its stdout, stderr, and exit code. For "
+        "PDF creation, templating, or scripted PDF edits, use the pdf block's tools "
+        "instead."
     )
     parameters: dict[str, Any] = {
         "type": "object",

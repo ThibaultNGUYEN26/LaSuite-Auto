@@ -129,6 +129,9 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "local_files_read_image",
                 "local_files_read_pdf",
                 "run_python",
+                "pdf_create",
+                "pdf_apply_template",
+                "pdf_run_script",
             },
         )
 

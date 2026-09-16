@@ -5,6 +5,7 @@ import { listConversations, type SavedConversation } from '../api/conversations'
 
 type ConversationListProps = {
   refreshKey: number
+  selectedConversationId: string | null
   onNewConversation: () => void
   onSelectConversation: (conversation: SavedConversation) => void
 }
@@ -15,6 +16,7 @@ function formatDate(value: string): string {
 
 function ConversationList({
   refreshKey,
+  selectedConversationId,
   onNewConversation,
   onSelectConversation
 }: ConversationListProps): React.JSX.Element {
@@ -58,21 +60,20 @@ function ConversationList({
         <span className="sidebar-row-text sidebar-row-title">New conversation</span>
       </button>
       <HorizontalSeparator />
-      <div className="conversation-list-items">
-        {conversations.map((conversation) => (
-          <button
-            key={conversation.id}
-            type="button"
-            className="conversation-list-item"
-            onClick={() => onSelectConversation(conversation)}
-          >
-            <div className="conversation-list-item-title">{conversation.title}</div>
-            <div className="conversation-list-item-subtitle">
-              {formatDate(conversation.updated_at)}
-            </div>
-          </button>
-        ))}
-      </div>
+      {conversations.map((conversation) => (
+        <button
+          key={conversation.id}
+          type="button"
+          className="sidebar-row"
+          data-active={conversation.id === selectedConversationId}
+          onClick={() => onSelectConversation(conversation)}
+        >
+          <span className="sidebar-row-text">
+            <span className="sidebar-row-title">{conversation.title}</span>
+            <span className="sidebar-row-subtitle">{formatDate(conversation.updated_at)}</span>
+          </span>
+        </button>
+      ))}
     </div>
   )
 }

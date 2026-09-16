@@ -33,6 +33,11 @@ agent/
       list_items.py
       read_image.py
       read_pdf.py
+    pdf/
+      block.py
+      apply_template.py
+      create_pdf.py
+      run_script.py
 services/
   drive.py
   image.py
@@ -105,6 +110,32 @@ failure. `DRIVE_MAX_BATCH_FILES` controls the maximum number of files per batch.
 preserved, including PDFs, images, archives, office documents, and arbitrary
 binary formats. Its source path is restricted to `LOCAL_FILES_ROOT`, it can
 target a Drive folder UUID, and uploads are bounded by `DRIVE_MAX_UPLOAD_BYTES`.
+
+## Creating and editing PDFs
+
+`pdf_create` writes a simple PDF (optional title plus plain-text body) below
+`LOCAL_FILES_ROOT`, using the same non-overwriting, no-implicit-directories
+rules as `local_files_create_file`.
+
+`pdf_apply_template` compiles an existing local `.typ` (Typst) file into a
+PDF. Layout - headers, footers, page numbers, styling - is authored directly
+in the template using Typst's own markup, so the tool itself takes nothing
+beyond the source path and destination.
+
+`pdf_run_script` covers everything the two structured tools cannot express -
+merging, splitting, rotating, watermarking, form filling, and similar edits.
+It runs a short Python script the same way `run_python` does, except its
+working directory is `LOCAL_FILES_ROOT` and the backend's own environment
+already has `pypdf` (editing existing PDFs) and `fpdf` (fpdf2, building PDFs
+from scratch) installed, so the model does not need to install anything.
+`run_python`/`run_python_file` themselves stay PDF-library-free and point the
+model at the pdf block's tools instead, so PDF work always ends up shaped by
+those tools rather than one-off scripts. As with `run_python`, the script only
+has whatever the local filesystem gives it; it does not see the conversation.
+
+`PDF_MAX_CREATE_CHARACTERS` bounds `pdf_create`'s body text and
+`PDF_MAX_TEMPLATE_SOURCE_BYTES` bounds the Typst source `pdf_apply_template`
+will compile.
 
 ## Importing CSV files into Grist
 

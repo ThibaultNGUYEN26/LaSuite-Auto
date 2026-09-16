@@ -34,6 +34,7 @@ function App(): React.JSX.Element {
           <>
             <ConversationList
               refreshKey={conversationsVersion}
+              selectedConversationId={selectedConversation?.id ?? null}
               onNewConversation={() => {
                 setSelectedConversation(null)
                 setActiveWorkflow(null)
