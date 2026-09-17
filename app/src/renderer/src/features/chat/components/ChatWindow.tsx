@@ -168,10 +168,22 @@ function ChatWindow({
     try {
       await streamChatMessage(chatId, nextMessages, onEvent, controller.signal)
     } catch (error) {
-      if ((error as Error).name === 'AbortError') return
       if (flushHandleRef.current !== null) {
         cancelAnimationFrame(flushHandleRef.current)
         flushHandleRef.current = null
+      }
+      if ((error as Error).name === 'AbortError') {
+        // Flush whatever tokens had already streamed in so the stopped reply
+        // stays visible instead of vanishing, and stop the "Thinking…" spinner.
+        // The backend persists this same partial content on its disconnect path,
+        // so it survives a reload of the conversation too.
+        flushPendingEvents()
+        patchMessage(assistantMessage.id, {
+          status: undefined,
+          streaming: false,
+          thinkingMs: Date.now() - askedAt
+        })
+        return
       }
       pendingEventsRef.current = []
       patchMessage(assistantMessage.id, {
@@ -183,6 +195,10 @@ function ChatWindow({
     } finally {
       setIsSending(false)
     }
+  }
+
+  const handleStop = (): void => {
+    abortControllerRef.current?.abort()
   }
 
   const handleSaveAsWorkflow = async (): Promise<void> => {
@@ -233,6 +249,8 @@ function ChatWindow({
           onChange={setInput}
           onSubmit={handleSubmit}
           canSubmit={canSubmit}
+          isSending={isSending}
+          onStop={handleStop}
           onSaveAsWorkflow={messages.length > 0 ? handleSaveAsWorkflow : undefined}
           isSavingWorkflow={isDraftingManually}
         />

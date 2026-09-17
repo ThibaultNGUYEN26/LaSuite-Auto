@@ -13,7 +13,7 @@ def create(db: Session, draft: ChatCreate) -> Chat:
     chat = Chat(
         title=draft.title,
         messages=[
-            ChatMessageRow(position=i, role=m.role, content=m.content)
+            ChatMessageRow(position=i, role=m.role, content=m.content, trace=m.trace)
             for i, m in enumerate(draft.messages)
         ],
     )
@@ -38,7 +38,9 @@ def save_history(
         chat.messages.clear()
 
     chat.messages.extend(
-        ChatMessageRow(position=i, role=message.role, content=message.content)
+        ChatMessageRow(
+            position=i, role=message.role, content=message.content, trace=message.trace
+        )
         for i, message in enumerate(messages)
     )
     db.commit()
@@ -70,7 +72,10 @@ def append_message(db: Session, chat_id: str, message: ChatMessage) -> Chat | No
         return None
     chat.messages.append(
         ChatMessageRow(
-            position=len(chat.messages), role=message.role, content=message.content
+            position=len(chat.messages),
+            role=message.role,
+            content=message.content,
+            trace=message.trace,
         )
     )
     db.commit()

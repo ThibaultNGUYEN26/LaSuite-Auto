@@ -84,21 +84,67 @@ async def chat_stream(
         chat_repository.save_history(db, chat_id, request.messages)
 
     async def event_source():
+        partial_content = ""
+        # Mirrors the frontend's `applyStreamEvent` trace-building so a reopened
+        # conversation's "View trace" panel matches what was shown live.
+        trace: list[dict] = []
+        tool_call_positions: dict[str, int] = {}
+
+        def save_partial() -> None:
+            if chat_id and (partial_content or trace):
+                chat_repository.save_history(
+                    db,
+                    chat_id,
+                    [
+                        *request.messages,
+                        ChatMessage(
+                            role="assistant",
+                            content=partial_content,
+                            trace=trace or None,
+                        ),
+                    ],
+                )
+
         try:
             async for event in run_stream(request.messages):
                 if await http_request.is_disconnected():
+                    save_partial()
                     return
+                if event.type == "token":
+                    partial_content += event.data["delta"]
+                elif event.type == "step_start":
+                    trace.append({"type": "step", "step": event.data["step"]})
+                elif event.type == "tool_call_start":
+                    tool_call_positions[event.data["tool_call_id"]] = len(trace)
+                    trace.append(
+                        {
+                            "type": "tool_call",
+                            "toolCallId": event.data["tool_call_id"],
+                            "step": event.data["step"],
+                            "name": event.data["name"],
+                            "arguments": event.data["arguments"],
+                        }
+                    )
+                elif event.type == "tool_call_result":
+                    position = tool_call_positions.get(event.data["tool_call_id"])
+                    if position is not None:
+                        trace[position]["result"] = event.data["result"]
                 if chat_id and event.type == "final":
                     chat_repository.save_history(
                         db,
                         chat_id,
                         [
                             *request.messages,
-                            ChatMessage(role="assistant", content=event.data["content"]),
+                            ChatMessage(
+                                role="assistant",
+                                content=event.data["content"],
+                                trace=trace or None,
+                            ),
                         ],
                     )
                 yield event.to_sse()
         except AgentError as exc:
+            save_partial()
             yield AgentEvent(
                 "error", {"message": str(exc), "error_type": type(exc).__name__}
             ).to_sse()

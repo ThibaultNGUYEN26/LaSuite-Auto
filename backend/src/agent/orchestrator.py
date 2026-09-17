@@ -259,7 +259,10 @@ class OrchestratorAgent:
             )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": planning_prompt},
-            *(message.model_dump() for message in conversation),
+            *(
+                message.model_dump(include={"role", "content"})
+                for message in conversation
+            ),
         ]
         context = DelegationContext(conversation=tuple(conversation))
         used_specialist = False

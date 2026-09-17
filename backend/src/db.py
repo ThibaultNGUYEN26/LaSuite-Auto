@@ -28,6 +28,20 @@ def init_db() -> None:
     import models  # noqa: F401  (registers models on Base before create_all)
 
     Base.metadata.create_all(bind=engine)
+    _ensure_chat_messages_trace_column()
+
+
+def _ensure_chat_messages_trace_column() -> None:
+    # `create_all` only creates missing tables, not missing columns on tables
+    # that already exist on disk from before `trace` was added - there's no
+    # migration tool in this project, so patch it in directly.
+    with engine.connect() as conn:
+        columns = {
+            row[1] for row in conn.exec_driver_sql("PRAGMA table_info(chat_messages)")
+        }
+        if columns and "trace" not in columns:
+            conn.exec_driver_sql("ALTER TABLE chat_messages ADD COLUMN trace JSON")
+            conn.commit()
 
 
 def get_db() -> Iterator[Session]:

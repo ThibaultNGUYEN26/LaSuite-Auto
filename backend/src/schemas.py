@@ -1,11 +1,15 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    # Ordered log of steps/tool calls the orchestrator performed while producing
+    # this message, so the "View trace" panel survives reopening a conversation.
+    # Only ever set on assistant messages.
+    trace: list[dict[str, Any]] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

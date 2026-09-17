@@ -110,7 +110,10 @@ async def evaluate_workflow_suggestion(
 
     prompt_messages: list[dict[str, Any]] = [
         {"role": "system", "content": SUGGESTION_SYSTEM_PROMPT},
-        *(message.model_dump() for message in messages),
+        *(
+            message.model_dump(include={"role", "content"})
+            for message in messages
+        ),
     ]
     content_parts: list[str] = []
     async for chunk in albert.chat_completion_stream(

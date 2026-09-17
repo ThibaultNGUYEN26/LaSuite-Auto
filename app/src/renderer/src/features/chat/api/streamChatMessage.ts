@@ -13,7 +13,7 @@ export async function streamChatMessage(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
-      messages: messages.map(({ role, content }) => ({ role, content }))
+      messages: messages.map(({ role, content, trace }) => ({ role, content, trace }))
     }),
     signal
   })

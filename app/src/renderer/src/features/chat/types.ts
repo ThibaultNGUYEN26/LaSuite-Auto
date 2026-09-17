@@ -21,7 +21,7 @@ export type ChatMessage = {
   /** True while this assistant message is still receiving stream events. */
   streaming?: boolean
   /** Ordered log of steps/tool calls performed while producing this message, shown in a trace dropdown. */
-  trace?: TraceEntry[]
+  trace?: TraceEntry[] | null
   /** Sent to the backend as conversation context but not rendered (e.g. a workflow's instructions). */
   hidden?: boolean
 }

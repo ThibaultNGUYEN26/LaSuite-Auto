@@ -1,3 +1,5 @@
+import type { TraceEntry } from '../../chat/types'
+
 const BACKEND_URL = import.meta.env.BACKEND_URL ?? 'http://127.0.0.1:8000'
 
 export type SavedConversation = {
@@ -5,7 +7,11 @@ export type SavedConversation = {
   title: string
   created_at: string
   updated_at: string
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages: Array<{
+    role: 'user' | 'assistant'
+    content: string
+    trace?: TraceEntry[] | null
+  }>
 }
 
 export async function listConversations(): Promise<SavedConversation[]> {

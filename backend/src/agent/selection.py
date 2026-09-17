@@ -144,7 +144,10 @@ async def select_blocks(
             "role": "system",
             "content": selection_instructions,
         },
-        *(message.model_dump() for message in conversation),
+        *(
+            message.model_dump(include={"role", "content"})
+            for message in conversation
+        ),
     ]
     if execution_context:
         progress = json.dumps(execution_context[-8:], ensure_ascii=False)

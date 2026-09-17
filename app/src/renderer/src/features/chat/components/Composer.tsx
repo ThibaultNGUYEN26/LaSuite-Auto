@@ -8,6 +8,8 @@ type ComposerProps = {
   onChange: (value: string) => void
   onSubmit: (e: FormEvent) => void
   canSubmit: boolean
+  isSending?: boolean
+  onStop?: () => void
   onSaveAsWorkflow?: () => void
   isSavingWorkflow?: boolean
 }
@@ -17,6 +19,8 @@ function Composer({
   onChange,
   onSubmit,
   canSubmit,
+  isSending,
+  onStop,
   onSaveAsWorkflow,
   isSavingWorkflow
 }: ComposerProps): React.JSX.Element {
@@ -68,15 +72,27 @@ function Composer({
                 />
               </DropdownMenu>
             ) : null}
-            <Button
-              type="submit"
-              variant="primary"
-              size="small"
-              className="chat-composer-send c__button--send"
-              disabled={!canSubmit}
-              icon={<Icon name="arrow_upward" size={IconSize.SMALL} />}
-              aria-label="Send message"
-            />
+            {isSending ? (
+              <Button
+                type="button"
+                variant="primary"
+                size="small"
+                className="chat-composer-send chat-composer-stop"
+                onClick={onStop}
+                icon={<Icon name="stop" size={IconSize.SMALL} />}
+                aria-label="Stop generating"
+              />
+            ) : (
+              <Button
+                type="submit"
+                variant="primary"
+                size="small"
+                className="chat-composer-send c__button--send"
+                disabled={!canSubmit}
+                icon={<Icon name="arrow_upward" size={IconSize.SMALL} />}
+                aria-label="Send message"
+              />
+            )}
           </div>
         </div>
       </form>
