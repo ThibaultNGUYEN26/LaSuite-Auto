@@ -1,7 +1,7 @@
 import io
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agent.base import DelegationContext
 from agent.errors import DriveAPIError
@@ -16,6 +16,7 @@ class FakeResponse(io.BytesIO):
     def __init__(self, payload: dict | None = None):
         super().__init__(json.dumps(payload or {}).encode("utf-8"))
         self.headers = {}
+        self.status = 200
 
     def __enter__(self):
         return self
@@ -26,8 +27,11 @@ class FakeResponse(io.BytesIO):
 
 class DriveFileCreationTests(unittest.TestCase):
     @patch("services.drive.urlopen")
-    def test_creates_uploads_and_finalizes_file(self, urlopen):
-        urlopen.side_effect = [
+    @patch("services.drive._drive_api")
+    def test_creates_uploads_and_finalizes_file(self, drive_api_context, urlopen):
+        drive_api = MagicMock()
+        drive_api_context.return_value.__enter__.return_value = drive_api
+        drive_api.api_v1_0_items_create_without_preload_content.return_value = (
             FakeResponse(
                 {
                     "id": ITEM_ID,
@@ -36,10 +40,12 @@ class DriveFileCreationTests(unittest.TestCase):
                     "policy": "http://storage:9000/upload/signed",
                     "url_permalink": "http://drive/items/notes",
                 }
-            ),
-            FakeResponse(),
-            FakeResponse({"id": ITEM_ID}),
-        ]
+            )
+        )
+        drive_api.api_v1_0_items_upload_ended_create_without_preload_content.return_value = (
+            FakeResponse({"id": ITEM_ID})
+        )
+        urlopen.return_value = FakeResponse()
 
         result = create_drive_file(
             "http://drive:8071",
@@ -51,26 +57,30 @@ class DriveFileCreationTests(unittest.TestCase):
             content_type="text/markdown",
         )
 
-        create_request = urlopen.call_args_list[0].args[0]
-        self.assertEqual(create_request.get_method(), "POST")
-        self.assertEqual(
-            json.loads(create_request.data),
-            {"type": "file", "filename": "notes.md"},
+        create_model = (
+            drive_api.api_v1_0_items_create_without_preload_content.call_args.args[0]
         )
-        self.assertIn("drive_sessionid=session-secret", create_request.get_header("Cookie"))
-        self.assertIn("csrftoken=csrf-secret", create_request.get_header("Cookie"))
-        self.assertEqual(create_request.get_header("X-csrftoken"), "csrf-secret")
+        self.assertEqual(create_model.type.value, "file")
+        self.assertEqual(create_model.filename, "notes.md")
+        self.assertEqual(
+            drive_api.api_v1_0_items_create_without_preload_content.call_args.kwargs[
+                "_headers"
+            ],
+            {"X-CSRFToken": "csrf-secret"},
+        )
 
-        upload_request = urlopen.call_args_list[1].args[0]
+        upload_request = urlopen.call_args.args[0]
         self.assertEqual(upload_request.get_method(), "PUT")
         self.assertEqual(upload_request.data, b"hello")
         self.assertEqual(upload_request.get_header("Content-type"), "text/markdown")
         self.assertEqual(upload_request.get_header("X-amz-acl"), "private")
         self.assertIsNone(upload_request.get_header("Cookie"))
 
-        finalize_request = urlopen.call_args_list[2].args[0]
-        self.assertEqual(finalize_request.get_method(), "POST")
-        self.assertTrue(finalize_request.full_url.endswith(f"/{ITEM_ID}/upload-ended/"))
+        finalized_id = (
+            drive_api.api_v1_0_items_upload_ended_create_without_preload_content
+            .call_args.args[0]
+        )
+        self.assertEqual(str(finalized_id), ITEM_ID)
         self.assertEqual(result["status"], "created")
         self.assertEqual(result["bytes_written"], 5)
         self.assertEqual(result["artifact"]["location"], "drive")

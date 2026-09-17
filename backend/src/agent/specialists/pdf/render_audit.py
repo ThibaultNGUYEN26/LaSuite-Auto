@@ -14,8 +14,9 @@ from agent.artifact_store import (
 )
 from agent.artifacts import Artifact
 from agent.base import DelegationContext, SpecialistAgent
-from agent.errors import PdfError
-from services.pdf import create_local_pdf
+from agent.errors import LocalFilesError, PdfError
+from services.audit_report import render_audit_report
+from services.local_files import create_local_binary_file
 
 
 class PdfRenderAuditAgent(SpecialistAgent):
@@ -55,11 +56,11 @@ class PdfRenderAuditAgent(SpecialistAgent):
         self,
         root: Path,
         *,
-        max_body_characters: int = 200_000,
+        max_report_bytes: int = 5 * 1024 * 1024,
         artifact_store: MemoryArtifactStore = memory_artifact_store,
     ) -> None:
         self.root = root
-        self.max_body_characters = max_body_characters
+        self.max_report_bytes = max_report_bytes
         self.artifact_store = artifact_store
 
     def execute(
@@ -80,21 +81,33 @@ class PdfRenderAuditAgent(SpecialistAgent):
             payload = self.artifact_store.get(artifact, expected_kind="audit_report")
         except ArtifactNotFoundError as exc:
             raise PdfError(str(exc.args[0])) from exc
-        if not isinstance(payload, dict) or not isinstance(payload.get("audit"), str):
+        if not isinstance(payload, dict):
             raise PdfError("The audit artifact contains invalid data")
         clean_name = arguments["file_name"].strip()
         if clean_name.lower().endswith(".pdf"):
             clean_name = clean_name[:-4]
-        created = create_local_pdf(
-            self.root,
-            directory=arguments["directory"],
-            file_name=clean_name,
+        report_data, verification = render_audit_report(
+            payload,
             title=title.strip() or clean_name or "Audit report",
-            body_text=payload["audit"],
-            max_body_characters=self.max_body_characters,
         )
+        try:
+            created = create_local_binary_file(
+                self.root,
+                directory=arguments["directory"],
+                file_name=clean_name,
+                extension="pdf",
+                data=report_data,
+                max_bytes=self.max_report_bytes,
+                media_type="application/pdf",
+            )
+        except LocalFilesError as exc:
+            raise PdfError(str(exc)) from exc
         return {
             "status": "created",
             "source_audit": artifact.tool_value(),
-            **created,
+            "verification": verification,
+            "report": created,
+            "artifact": created["artifact"],
+            "relative_path": created["relative_path"],
+            "bytes_written": created["bytes_written"],
         }

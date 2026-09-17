@@ -6,6 +6,8 @@ from unittest.mock import patch
 from agent.base import DelegationContext, SpecialistAgent
 from agent.blocks import (
     AgentBlock,
+    ArtifactContract,
+    CapabilityManifest,
     BlockRegistry,
     WorkflowManifest,
     build_agent_registry,
@@ -13,7 +15,11 @@ from agent.blocks import (
 from agent.orchestrator import (
     OrchestratorAgent,
     _append_resource_links,
+    _has_completed_required_outcome,
+    _is_capability_catalog_request,
     _partial_result_fallback,
+    _requests_corpus_document_analysis,
+    _render_capability_catalog,
 )
 from agent.registry import AgentRegistry
 from agent.specialists.drive import DriveConfigAgent
@@ -103,6 +109,35 @@ class FakeGristImportAgent(SpecialistAgent):
         return {"status": "imported", "document_id": "grist-doc-1"}
 
 
+class FakeCorpusAnalysisAgent(SpecialistAgent):
+    name = "example_analyze_folder"
+    description = "Analyze every document in a folder as one bounded corpus."
+    parameters = {
+        "type": "object",
+        "properties": {"directory": {"type": "string"}},
+        "required": ["directory"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, arguments: dict, context: DelegationContext) -> dict:
+        self.calls.append(arguments)
+        return {
+            "status": "analyzed",
+            "document_count": 16,
+            "pdf_memories": {
+                "requested": 10,
+                "created": 10,
+                "updated": 0,
+                "skipped": 0,
+                "failed": 0,
+                "limited": False,
+            },
+        }
+
+
 async def collect_events(agent, conversation):
     events = []
     async for event in agent.run_stream(conversation):
@@ -111,6 +146,223 @@ async def collect_events(agent, conversation):
 
 
 class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
+    def test_required_corpus_outcome_rejects_incomplete_pdf_preparation(self):
+        capabilities = ("example_analyze_folder",)
+        self.assertFalse(
+            _has_completed_required_outcome(
+                [
+                    {
+                        "capability": "example_analyze_folder",
+                        "result": {
+                            "status": "analyzed",
+                            "pdf_memories": {
+                                "requested": 10,
+                                "created": 1,
+                                "updated": 0,
+                                "skipped": 0,
+                                "failed": 9,
+                                "limited": False,
+                            },
+                        },
+                    }
+                ],
+                capabilities,
+            )
+        )
+        self.assertTrue(
+            _has_completed_required_outcome(
+                [
+                    {
+                        "capability": "example_analyze_folder",
+                        "result": {
+                            "status": "analyzed",
+                            "pdf_memories": {
+                                "requested": 10,
+                                "created": 9,
+                                "updated": 0,
+                                "skipped": 1,
+                                "failed": 0,
+                                "limited": False,
+                            },
+                        },
+                    }
+                ],
+                capabilities,
+            )
+        )
+
+    def test_recognizes_natural_corpus_analysis_without_audit(self):
+        self.assertTrue(
+            _requests_corpus_document_analysis(
+                [
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            "Analyze the complete checklist and all documents from "
+                            "the first client. Summarize them separately and do not "
+                            "compare them or perform a compliance audit yet."
+                        ),
+                    )
+                ]
+            )
+        )
+        self.assertFalse(
+            _requests_corpus_document_analysis(
+                [
+                    ChatMessage(
+                        role="user",
+                        content="Audit all documents from the first client.",
+                    )
+                ]
+            )
+        )
+
+    async def test_corpus_analysis_cannot_finalize_before_bounded_capability(self):
+        corpus_agent = FakeCorpusAnalysisAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="documents",
+                    description="Analyze document collections.",
+                    agents=(corpus_agent,),
+                    capabilities=(
+                        CapabilityManifest(
+                            name=corpus_agent.name,
+                            description=corpus_agent.description,
+                            produces=(ArtifactContract("document_analysis"),),
+                        ),
+                    ),
+                )
+            ]
+        )
+        albert = FakeAlbertClient(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "id": "select-documents",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps({"blocks": ["documents"]}),
+                            },
+                        }
+                    ]
+                },
+                {"content": "Here is a summary based on individual reads."},
+                {
+                    "tool_calls": [
+                        {
+                            "id": "analyze-corpus",
+                            "type": "function",
+                            "function": {
+                                "name": corpus_agent.name,
+                                "arguments": json.dumps({"directory": "AUTO/Client"}),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "selection-complete",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps({"blocks": []}),
+                            },
+                        }
+                    ]
+                },
+                {"content": "All client documents were analyzed separately."},
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            block_registry=blocks,
+            max_steps=4,
+        )
+
+        events = await collect_events(
+            agent,
+            [
+                ChatMessage(
+                    role="user",
+                    content="Analyze all documents from the first client folder.",
+                )
+            ],
+        )
+
+        self.assertEqual(corpus_agent.calls, [{"directory": "AUTO/Client"}])
+        self.assertEqual(
+            events[-1].data["content"],
+            "All client documents were analyzed separately.",
+        )
+        self.assertIn(
+            "document_analysis outcome",
+            albert.requests[1]["messages"][0]["content"],
+        )
+
+    def test_recognizes_capability_catalog_requests(self):
+        self.assertTrue(
+            _is_capability_catalog_request(
+                [ChatMessage(role="user", content="List every tool we have")]
+            )
+        )
+        self.assertFalse(
+            _is_capability_catalog_request(
+                [ChatMessage(role="user", content="Create a CSV file")]
+            )
+        )
+
+    async def test_catalog_request_uses_live_registry_without_calling_model(self):
+        python_agent = FakePythonAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="python",
+                    description="Perform Python-based transformations.",
+                    agents=(python_agent,),
+                )
+            ]
+        )
+        albert = FakeAlbertClient([])
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            block_registry=blocks,
+        )
+
+        events = await collect_events(
+            agent,
+            [ChatMessage(role="user", content="Show every available tool")],
+        )
+
+        content = events[-1].data["content"]
+        self.assertIn("## python", content)
+        self.assertIn("`python_execute`", content)
+        self.assertIn('"working_directory"', content)
+        self.assertEqual(albert.requests, [])
+
+    def test_detailed_catalog_includes_exact_policy_and_schema(self):
+        python_agent = FakePythonAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="python",
+                    description="Perform transformations.",
+                    agents=(python_agent,),
+                )
+            ]
+        )
+
+        rendered = _render_capability_catalog(blocks)
+
+        self.assertIn("Side effect: `none`", rendered)
+        self.assertIn('"required": [', rendered)
+        self.assertIn('"task"', rendered)
+
     def test_partial_fallback_preserves_completed_audit_outputs(self):
         content = _partial_result_fallback(
             [
@@ -179,6 +431,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             names,
             {
                 "drive_get_config",
+                "drive_create_folder",
                 "drive_create_file",
                 "drive_create_files",
                 "drive_download_folder",

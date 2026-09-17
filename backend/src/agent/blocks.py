@@ -180,6 +180,98 @@ class BlockRegistry:
             raise BlockLoadError(f"Unknown capability blocks: {', '.join(unknown)}")
         return [self._blocks[name].summary() for name in selected_names]
 
+    def detailed_catalog(
+        self, block_names: Iterable[str] | None = None
+    ) -> list[dict[str, object]]:
+        """Return contributor-declared metadata plus exact input schemas.
+
+        This is intended for user-facing capability discovery. It is generated
+        from the same discovered blocks used by the orchestrator, so externally
+        installed blocks appear without requiring changes to the core.
+        """
+        selected_names = self.names if block_names is None else tuple(block_names)
+        unknown = sorted(set(selected_names) - set(self._blocks))
+        if unknown:
+            raise BlockLoadError(f"Unknown capability blocks: {', '.join(unknown)}")
+
+        details: list[dict[str, object]] = []
+        for name in selected_names:
+            block = self._blocks[name]
+            agents = {agent.name: agent for agent in block.agents}
+            details.append(
+                {
+                    "name": block.name,
+                    "description": block.description,
+                    "permissions": list(block.permissions),
+                    "required_config": [
+                        {
+                            "name": requirement.name,
+                            "required": requirement.required,
+                            "secret": requirement.secret,
+                            "description": requirement.description,
+                        }
+                        for requirement in block.required_config
+                    ],
+                    "capabilities": [
+                        {
+                            "name": capability.name,
+                            "description": capability.description,
+                            "parameters": agents[capability.name].parameters,
+                            "side_effect": capability.side_effect,
+                            "permissions": list(capability.permissions),
+                            "confirmation_required": capability.confirmation_required,
+                            "internal": capability.internal,
+                            "accepts": [
+                                {
+                                    "kind": artifact.kind,
+                                    "media_types": list(artifact.media_types),
+                                    "description": artifact.description,
+                                }
+                                for artifact in capability.accepts
+                            ],
+                            "produces": [
+                                {
+                                    "kind": artifact.kind,
+                                    "media_types": list(artifact.media_types),
+                                    "description": artifact.description,
+                                }
+                                for artifact in capability.produces
+                            ],
+                        }
+                        for capability in block.capability_catalog()
+                    ],
+                    "workflows": [
+                        {
+                            "name": workflow.name,
+                            "description": workflow.description,
+                            "capabilities": list(workflow.capabilities),
+                        }
+                        for workflow in block.workflows
+                    ],
+                }
+            )
+        return details
+
+    def capabilities_producing(
+        self,
+        artifact_kind: str,
+        block_names: Iterable[str] | None = None,
+    ) -> tuple[str, ...]:
+        """Return capability names that declare a requested output contract."""
+        selected_names = self.names if block_names is None else tuple(block_names)
+        unknown = sorted(set(selected_names) - set(self._blocks))
+        if unknown:
+            raise BlockLoadError(f"Unknown capability blocks: {', '.join(unknown)}")
+        return tuple(
+            capability.name
+            for name in selected_names
+            for capability in self._blocks[name].capability_catalog()
+            if any(
+                artifact.kind == artifact_kind
+                for artifact in capability.produces
+            )
+        )
+
     def agent_registry(self, block_names: Iterable[str] | None = None) -> AgentRegistry:
         selected_names = self.names if block_names is None else tuple(block_names)
         unknown = sorted(set(selected_names) - set(self._blocks))

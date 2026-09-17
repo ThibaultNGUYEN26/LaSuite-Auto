@@ -230,11 +230,15 @@ class LocalFilesAuditFolderAgent(SpecialistAgent):
             "sources": result.pop("sources"),
             "audit_reference": result["audit_reference"],
             "client_directory": result["client_directory"],
+            "overall_result": result["overall_result"],
+            "complete": result["complete"],
+            "limitations": list(result["limitations"]),
         }
         verdict_counts: dict[str, int] = {}
         for finding in audit_payload["findings"]:
             verdict = str(finding["status"])
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+        audit_payload["verdict_counts"] = verdict_counts
         audit_artifact = self.artifact_store.put(
             audit_payload,
             kind="audit_report",

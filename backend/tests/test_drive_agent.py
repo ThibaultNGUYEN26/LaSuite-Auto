@@ -1,7 +1,7 @@
 import io
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agent.base import DelegationContext
 from agent.specialists.drive import DriveListItemsAgent
@@ -10,6 +10,9 @@ from services.drive import list_drive_items
 
 
 class FakeResponse(io.BytesIO):
+    status = 200
+    headers: dict[str, str] = {}
+
     def __enter__(self):
         return self
 
@@ -18,8 +21,8 @@ class FakeResponse(io.BytesIO):
 
 
 class DriveListItemsAgentTests(unittest.TestCase):
-    @patch("services.drive.urlopen")
-    def test_lists_authenticated_items_and_compacts_the_response(self, urlopen):
+    @patch("services.drive._drive_api")
+    def test_lists_authenticated_items_and_compacts_the_response(self, drive_api_context):
         payload = {
             "count": 1,
             "next": None,
@@ -38,25 +41,33 @@ class DriveListItemsAgentTests(unittest.TestCase):
                 }
             ],
         }
-        urlopen.return_value = FakeResponse(json.dumps(payload).encode("utf-8"))
+        drive_api = MagicMock()
+        drive_api_context.return_value.__enter__.return_value = drive_api
+        drive_api.api_v1_0_items_list_without_preload_content.return_value = (
+            FakeResponse(json.dumps(payload).encode("utf-8"))
+        )
 
         result = list_drive_items(
             "http://drive:8071", "session-secret", limit=25, recursive=False
         )
 
-        request = urlopen.call_args.args[0]
         self.assertEqual(
-            request.full_url, "http://drive:8071/api/v1.0/items/?page_size=25"
+            drive_api.api_v1_0_items_list_without_preload_content.call_args.kwargs[
+                "page_size"
+            ],
+            25,
         )
-        self.assertEqual(request.get_header("Cookie"), "drive_sessionid=session-secret")
+        drive_api_context.assert_called_once_with(
+            "http://drive:8071", "session-secret"
+        )
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["returned"], 1)
         self.assertNotIn("abilities", result["items"][0])
         self.assertEqual(result["items"][0]["title"], "Reports")
         self.assertEqual(result["items"][0]["path"], ["Reports"])
 
-    @patch("services.drive.urlopen")
-    def test_recursively_lists_folder_children(self, urlopen):
+    @patch("services.drive._drive_api")
+    def test_recursively_lists_folder_children(self, drive_api_context):
         folder_id = "4d57f9aa-f5b6-4581-af99-28c6f935cd2b"
         root_payload = {
             "count": 1,
@@ -70,10 +81,14 @@ class DriveListItemsAgentTests(unittest.TestCase):
                 {"id": "file-1", "title": "Annual report.pdf", "type": "file"}
             ],
         }
-        urlopen.side_effect = [
-            FakeResponse(json.dumps(root_payload).encode("utf-8")),
-            FakeResponse(json.dumps(child_payload).encode("utf-8")),
-        ]
+        drive_api = MagicMock()
+        drive_api_context.return_value.__enter__.return_value = drive_api
+        drive_api.api_v1_0_items_list_without_preload_content.return_value = (
+            FakeResponse(json.dumps(root_payload).encode("utf-8"))
+        )
+        drive_api.api_v1_0_items_children_retrieve_without_preload_content.return_value = (
+            FakeResponse(json.dumps(child_payload).encode("utf-8"))
+        )
 
         result = list_drive_items("http://drive:8071", "session-secret")
 
@@ -81,8 +96,11 @@ class DriveListItemsAgentTests(unittest.TestCase):
         self.assertEqual(
             result["items"][1]["path"], ["Reports", "Annual report.pdf"]
         )
-        child_request = urlopen.call_args_list[1].args[0]
-        self.assertIn(f"/items/{folder_id}/children/", child_request.full_url)
+        child_id = (
+            drive_api.api_v1_0_items_children_retrieve_without_preload_content
+            .call_args.args[0]
+        )
+        self.assertEqual(str(child_id), folder_id)
 
     def test_requires_authentication_instead_of_returning_an_empty_drive(self):
         agent = DriveListItemsAgent("http://drive:8071", None)

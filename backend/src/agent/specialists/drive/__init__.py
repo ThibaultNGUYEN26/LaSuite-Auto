@@ -5,6 +5,7 @@ from agent.specialists.drive.create_file import (
     DriveCreateFileAgent,
     DriveCreateFilesAgent,
 )
+from agent.specialists.drive.create_folder import DriveCreateFolderAgent
 from agent.specialists.drive.download_folder import DriveDownloadFolderAgent
 from agent.specialists.drive.list_items import DriveListItemsAgent
 from agent.specialists.drive.read_image import DriveReadImageAgent
@@ -18,6 +19,7 @@ __all__ = [
     "DriveConfigAgent",
     "DriveCreateFileAgent",
     "DriveCreateFilesAgent",
+    "DriveCreateFolderAgent",
     "DriveDownloadFolderAgent",
     "DriveListItemsAgent",
     "DriveReadImageAgent",
