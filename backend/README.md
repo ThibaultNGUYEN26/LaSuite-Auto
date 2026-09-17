@@ -1,137 +1,112 @@
+# Backend README
+
+This is the backend for the La Suite Automations project. It exposes the orchestration API, manages persistence, coordinates specialist capabilities, and integrates with external services such as Albert, La Suite Drive, Grist, and local file storage.
+
+## What is in this backend?
+
+The backend is organized into a few main layers:
+
+- `src/agent/` — reasoning loop and capability-block system
+- `src/providers/` — model provider adapters
+- `src/repositories/` — database access for chats and workflows
+- `src/services/` — reusable backend logic and integrations
+- `src/config.py` and `src/main.py` — configuration and app entry points
+- `src/models.py`, `src/schemas.py`, `src/db.py` — data layer and request schema definitions
+
+For a more detailed map, see [src/README.md](src/README.md).
+
 ## Setup
 
-Create a Python virtual environment and install the backend dependencies:
+Create a Python environment and install the backend dependencies:
 
 ```bash
-uv sync           # creates .venv and installs dependencies from uv.lock (only needed after cloning or changing deps)
-uv add <package>  # add a new dependency (updates pyproject.toml + uv.lock)
-cp .env.example .env  # then edit BACKEND_URL if not running on the default host/port
-uv run main.py    # run the dev server with reload, on the host/port from BACKEND_URL
+uv sync
+cp .env.example .env
+uv run main.py
 ```
+
+If the project already has a working environment, you can also run the backend directly from the backend directory using the configured command for your local shell.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and adjust as needed:
+Copy `.env.example` to `.env` and adjust the values you need. The most important settings include:
 
-- `BACKEND_URL` — full URL (protocol + host + port) the server binds to, e.g.
-  `http://127.0.0.1:8000`. The frontend (`app/.env`) must be set to the same
-  value so it knows where to reach this server — change the host here if the
-  backend runs on a different machine than the Electron app.
-- `AUTO_CORS_ORIGINS` — comma-separated list of origins allowed to call the
-  backend. Defaults to `*`.
-- `DRIVE_SESSION_ID` — development credential used for user-specific Drive
-  endpoints. Copy the value of the `drive_sessionid` cookie from an authenticated
-  local Drive session. Keep it in `.env` and never commit it.
-- `DRIVE_CSRF_TOKEN` — the `csrftoken` cookie from the same authenticated Drive
-  session, used by file-creation requests.
-- `DRIVE_MAX_CREATE_BYTES` — maximum UTF-8 content size accepted by the Drive
-  creation specialist. Defaults to 1 MiB.
-- `DRIVE_MAX_UPLOAD_BYTES` — maximum size of an existing local file uploaded to
-  Drive. Defaults to 50 MiB.
-- `GRIST_API_KEY` — bearer API key created from Grist account settings.
-- `GRIST_ORG_ID` — organization identifier from the Grist URL; for `/o/docs/`,
-  use `docs`.
-- `GRIST_WORKSPACE_ID` — optional default workspace where CSV imports are saved.
-- `PDF_SEARCH_MAX_LOCAL_FILES` / `PDF_SEARCH_MAX_DRIVE_FILES` — maximum PDFs
-  inspected by one corpus question. Defaults are 50 local files and 20 Drive files.
-- `PDF_SEARCH_MAX_PAGES` — maximum total pages indexed for one question. Extracted
-  pages are cached in backend memory and reused on later questions. It is also
-  the maximum size accepted by complete PDF-to-Markdown memory generation.
-- `PDF_MEMORY_MAX_BATCH_FILES` — maximum PDF memories created by one batch request.
-- `PDF_MEMORY_BATCH_CONCURRENCY` — number of PDFs summarized concurrently. Each PDF
-  still produces its own independent Markdown memory.
+- `BACKEND_URL` — public URL used by the server, e.g. `http://127.0.0.1:8000`
+- `AUTO_CORS_ORIGINS` — allowed origins for browser access
+- `ALBERT_API_KEY` — API key for the default LLM provider
+- `ALBERT_MODEL` — optional override for the text-generation model
+- `ALBERT_VISION_MODEL` — optional vision model for image analysis
+- `DRIVE_SESSION_ID` and `DRIVE_CSRF_TOKEN` — required for authenticated Drive actions
+- `LOCAL_FILES_ROOT` — root directory for local file operations
+- `GRIST_API_KEY`, `GRIST_ORG_ID`, `GRIST_WORKSPACE_ID` — Grist integration settings
+- PDF and auditing limits such as `PDF_SEARCH_MAX_PAGES`, `PDF_MEMORY_MAX_BATCH_FILES`, and similar values
 
-## Structure
+The backend reads these settings from environment variables and from the local `.env` file.
 
-```
-backend/src/
-├── main.py              # FastAPI app, routes
-├── schemas.py           # Pydantic models for requests/responses
-├── config.py            # Which provider/model is active, loaded from settings
-├── providers/           # "How do I talk to a model?"
-│   ├── base.py          # Abstract interface every provider implements
-│   ├── lasuite.py       # Interface to lasuit tokens
-└── agent/               # "What does the agent do with the model?"
-    ├── tools/           # Folder to indivudual tool defs
-    │   ├── readFile.py  # An idea
-    │   ├── runbash.py   # An idea
-    ├── orchestrator.py  # The loop: prompt -> maybe tool call -> maybe more prompting
-    ├── tools.py         # Collated all the tool calls the agent can call
-    └── memory.py        # Conversation history, context management
-```
+## Architecture at a glance
 
-## Capability-block routing
+The runtime follows a capability-block design.
 
-The orchestrator is independent from every integration implementation:
+- `src/agent/orchestrator.py` contains the coordination loop.
+- `src/agent/blocks.py` discovers built-in and installed blocks.
+- `src/agent/registry.py` compiles specialist agents into a tool registry.
+- `src/agent/selection.py` chooses relevant capabilities for a task.
+- The specialist packages in `src/agent/specialists/` implement the domain logic for Drive, local files, PDFs, Grist, and analysis.
 
-- `agent/orchestrator.py` contains only reasoning, chaining, delegation, and
-  result synthesis.
-- `agent/blocks.py` discovers built-in `agent/specialists/*/block.py` factories
-  and third-party packages installed through the
-  `lasuite_automations.blocks` entry-point group.
-- `agent/runtime.py` combines the selected model provider with the discovered
-  registry.
-- `agent/base.py` and `agent/registry.py` define and dispatch individual
-  capabilities.
+This means the orchestrator remains generic and does not need to know about each integration directly.
 
-Adding Drive, Docs, or any other block never requires an edit to the
-orchestrator. See `src/agent/README.md` for the open block contract, packaging
-example, and safety requirements.
+## Current capability domains
 
-## Run the first agent
+The current backend exposes a set of specialist domains:
 
-The current orchestrator uses Albert for chat and exposes Drive configuration
-and bounded recursive item listing as model-callable tools. Create your local
-environment file from the committed template:
+- Drive: file browsing, reads, uploads, downloads, and folder operations
+- Local files: bounded filesystem actions under `LOCAL_FILES_ROOT`
+- PDF processing: creation, rendering, analysis, memory generation, and audit workflows
+- Grist: CSV import and workspace discovery
+- Data analysis: tabular analysis and PDF report rendering
+- Code execution: script-based execution for bounded automation tasks
+
+The exact list is defined in the block factory modules under `src/agent/specialists/`.
+
+## Running the backend
+
+From the `backend` directory:
 
 ```bash
-cp .env.example .env
-# Then set ALBERT_API_KEY in .env. ALBERT_MODEL is optional.
-
-source venv/bin/activate
-python main.py
+uv run main.py
 ```
 
-The orchestrator automatically loads `backend/.env`. Existing shell environment
-variables take precedence over values in the file, and `.env` is ignored by Git.
-When `ALBERT_MODEL` is omitted, the orchestrator reads Albert's live model
-catalogue and uses the first canonical `text-generation` model id.
+The app exposes the FastAPI server and the API endpoints documented in [API/backend-api.md](API/backend-api.md) and [API/README.md](API/README.md).
 
-Send a request through the backend API:
+## API and documentation map
 
-```bash
-curl -s http://127.0.0.1:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Which languages does Drive support?"}]}'
-```
+- [API/README.md](API/README.md) — unified documentation for the backend API and Drive client
+- [API/backend-api.md](API/backend-api.md) — older redirect page to the merged backend API docs
+- [src/README.md](src/README.md) — topology of the backend source tree
+- [src/agent/README.md](src/agent/README.md) — runtime architecture and capability-block model
+- [src/agent/specialists/README.md](src/agent/specialists/README.md) — block domains and specialist responsibilities
+- [src/providers/README.md](src/providers/README.md) — model provider interface and active implementations
+- [src/repositories/README.md](src/repositories/README.md) — persistence layer for chats and workflows
+- [src/services/README.md](src/services/README.md) — reusable service logic for integrations and document workflows
 
-The Electron renderer sends this same POST request. Its backend URL defaults to
-`http://127.0.0.1:8000`; copy `app/.env.example` to `app/.env` to override
-`VITE_BACKEND_URL` when needed.
+## Typical workflow
 
-## Generate a conversation title
+A request usually follows this pattern:
 
-After the first assistant response is complete, the frontend can generate a
-short title from the first exchange:
+1. The frontend sends a chat payload to the backend API.
+2. The orchestrator loads the currently available blocks.
+3. The model selects relevant specialist tools.
+4. Those tools call external services or local file operations.
+5. Structured artifacts are returned and reused during the same orchestration run.
 
-```http
-POST /api/conversations/title
-Content-Type: application/json
+This is the foundation for the PDF memory, audit, comparison, and data-analysis flows in the backend.
 
-{
-  "chat_id": "optional-conversation-id",
-  "prompt": "Analyse the sales figures for this quarter",
-  "response": "Sales increased by 12% compared with last quarter."
-}
-```
+## Related files
 
-The response is:
-
-```json
-{
-  "title": "Quarterly sales trend"
-}
-```
-
-When `chat_id` is provided, the backend also saves the generated title on that
-conversation. Without it, the endpoint only returns the title.
+- [src/main.py](src/main.py)
+- [src/config.py](src/config.py)
+- [src/agent/blocks.py](src/agent/blocks.py)
+- [src/agent/orchestrator.py](src/agent/orchestrator.py)
+- [src/agent/runtime.py](src/agent/runtime.py)
+- [src/models.py](src/models.py)
+- [src/schemas.py](src/schemas.py)
