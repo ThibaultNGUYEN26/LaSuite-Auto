@@ -6,8 +6,10 @@ import asyncio
 import json
 from collections import Counter
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from agent.artifacts import Artifact
 from agent.errors import LocalFilesError, PdfError
@@ -15,6 +17,7 @@ from services.local_files import (
     list_local_items,
     read_local_pdf,
     read_local_text,
+    resolve_local_directory,
     resolve_local_file,
 )
 from services.pdf import extract_pdf_pages
@@ -24,10 +27,13 @@ from services.pdf_search import PdfSource, search_pdf_sources, search_tokens
 TEXT_EVIDENCE_EXTENSIONS = {
     ".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log"
 }
-AUDIT_BATCH_SIZE = 5
+AUDIT_BATCH_SIZE = 8
 AUDIT_BATCH_CONCURRENCY = 2
+AUDIT_BATCH_MAX_CHARACTERS = 80_000
 CRITERIA_INPUT_CHARACTERS = 40_000
 MAX_AUDIT_CRITERIA = 100
+CRITERIA_CACHE_VERSION = 1
+CRITERIA_CACHE_DIRECTORY = Path("memory") / ".audit-criteria"
 
 CRITERIA_PROMPT = (
     "Extract every distinct audit criterion from this original reference-document "
@@ -130,6 +136,84 @@ def _reference_criteria_batches(pages: list[str]) -> list[str]:
     return batches
 
 
+def _normalized_focus(focus: str | None) -> str:
+    return " ".join((focus or "").strip().casefold().split())
+
+
+def _criteria_cache_path(
+    root: Path, *, source_digest: str, focus: str | None
+) -> Path:
+    resolved_root = resolve_local_directory(root)
+    cache_directory = (resolved_root / CRITERIA_CACHE_DIRECTORY).resolve()
+    try:
+        cache_directory.relative_to(resolved_root)
+    except ValueError as exc:
+        raise PdfError("The audit criteria cache escapes LOCAL_FILES_ROOT") from exc
+    cache_directory.mkdir(parents=True, exist_ok=True)
+    focus_digest = sha256(_normalized_focus(focus).encode("utf-8")).hexdigest()[:16]
+    return cache_directory / f"{source_digest}-{focus_digest}.json"
+
+
+def _load_cached_criteria(
+    root: Path,
+    *,
+    source_digest: str,
+    focus: str | None,
+) -> list[dict[str, str]] | None:
+    try:
+        path = _criteria_cache_path(root, source_digest=source_digest, focus=focus)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if (
+        payload.get("version") != CRITERIA_CACHE_VERSION
+        or payload.get("source_sha256") != source_digest
+        or payload.get("focus") != _normalized_focus(focus)
+        or payload.get("prompt_sha256")
+        != sha256(CRITERIA_PROMPT.encode("utf-8")).hexdigest()
+    ):
+        return None
+    try:
+        return _parse_criteria(json.dumps({"criteria": payload.get("criteria")}))
+    except PdfError:
+        return None
+
+
+def _save_cached_criteria(
+    root: Path,
+    *,
+    source_digest: str,
+    focus: str | None,
+    criteria: list[dict[str, str]],
+) -> None:
+    payload = {
+        "version": CRITERIA_CACHE_VERSION,
+        "source_sha256": source_digest,
+        "focus": _normalized_focus(focus),
+        "prompt_sha256": sha256(CRITERIA_PROMPT.encode("utf-8")).hexdigest(),
+        "criteria": criteria,
+    }
+    temporary: Path | None = None
+    try:
+        path = _criteria_cache_path(root, source_digest=source_digest, focus=focus)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+            newline="\n",
+        )
+        temporary.replace(path)
+    except OSError:
+        # A cache failure must never prevent the audit itself from completing.
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 async def _extract_reference_criteria(
     root: Path,
     *,
@@ -138,10 +222,18 @@ async def _extract_reference_criteria(
     client: SummaryChatClient,
     model: str,
     max_read_bytes: int,
-) -> tuple[list[dict[str, str]], int]:
-    pages = extract_pdf_pages(
-        read_local_pdf(root, audit_relative_path, max_bytes=max_read_bytes)
+) -> tuple[list[dict[str, str]], int, bool]:
+    pdf_data = read_local_pdf(root, audit_relative_path, max_bytes=max_read_bytes)
+    source_digest = sha256(pdf_data).hexdigest()
+    cached = _load_cached_criteria(
+        root,
+        source_digest=source_digest,
+        focus=focus,
     )
+    if cached is not None:
+        return cached, 0, True
+
+    pages = extract_pdf_pages(pdf_data)
     batches = _reference_criteria_batches(pages)
     if not batches:
         raise PdfError("No extractable audit criteria were found in the reference PDF")
@@ -177,7 +269,13 @@ async def _extract_reference_criteria(
             f"The reference contains more than {MAX_AUDIT_CRITERIA} audit criteria; "
             "narrow the requested audit focus"
         )
-    return criteria, len(raw_results)
+    _save_cached_criteria(
+        root,
+        source_digest=source_digest,
+        focus=focus,
+        criteria=criteria,
+    )
+    return criteria, len(raw_results), False
 
 
 def _pdf_source(
@@ -279,7 +377,7 @@ async def audit_pdf_against_reference(
     if client_memory is None or not client_memory["up_to_date"]:
         raise PdfError("The client document must be prepared before auditing")
 
-    criteria, _ = await _extract_reference_criteria(
+    criteria, _, criteria_cache_hit = await _extract_reference_criteria(
         root,
         audit_relative_path=audit_relative_path,
         focus=focus,
@@ -352,6 +450,7 @@ async def audit_pdf_against_reference(
         "audit_reference": audit_relative_path,
         "client_document": client_relative_path,
         "criteria_count": len(criteria),
+        "criteria_cache_hit": criteria_cache_hit,
         "source_register_count": len(source_register),
         "sources": source_register,
         "audit": audit,
@@ -454,6 +553,32 @@ def _parse_findings(
             "corrective_action": str(value.get("corrective_action") or "Provide evidence that directly addresses this requirement.").strip(),
         }
     return findings
+
+
+def _audit_criterion_batches(
+    evidence_by_number: dict[int, str],
+) -> list[list[int]]:
+    """Pack criteria efficiently without creating oversized model prompts."""
+    batches: list[list[int]] = []
+    current: list[int] = []
+    current_size = 0
+    for number, evidence in evidence_by_number.items():
+        separator_size = 7 if current else 0
+        would_exceed_size = (
+            current
+            and current_size + separator_size + len(evidence)
+            > AUDIT_BATCH_MAX_CHARACTERS
+        )
+        if len(current) >= AUDIT_BATCH_SIZE or would_exceed_size:
+            batches.append(current)
+            current = []
+            current_size = 0
+            separator_size = 0
+        current.append(number)
+        current_size += separator_size + len(evidence)
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _render_corpus_audit(
@@ -671,7 +796,7 @@ async def audit_folder_against_reference(
             )
         )
 
-    criteria, criteria_calls = await _extract_reference_criteria(
+    criteria, criteria_calls, criteria_cache_hit = await _extract_reference_criteria(
         root,
         audit_relative_path=audit_relative_path,
         focus=focus,
@@ -741,9 +866,10 @@ async def audit_folder_against_reference(
             raw = await complete_text(
                 client, model=model, system=CORPUS_AUDIT_PROMPT, content=content
             )
-            calls += 1
-            findings = _parse_findings(raw, criteria_map)
-            if set(findings) != set(numbers):
+        calls += 1
+        findings = _parse_findings(raw, criteria_map)
+        if set(findings) != set(numbers):
+            async with semaphore:
                 raw = await complete_text(
                     client,
                     model=model,
@@ -753,14 +879,22 @@ async def audit_folder_against_reference(
                         "requested criterion exactly once.\n\n" + content
                     ),
                 )
-                calls += 1
-                findings = _parse_findings(raw, criteria_map)
+            calls += 1
+            findings.update(_parse_findings(raw, criteria_map))
+
+        missing = [number for number in numbers if number not in findings]
+        if missing and len(numbers) > 1:
+            midpoint = max(1, len(missing) // 2)
+            recovery_batches = [missing[:midpoint], missing[midpoint:]]
+            recovered = await asyncio.gather(
+                *(assess_batch(batch) for batch in recovery_batches if batch)
+            )
+            for recovered_findings, recovered_calls in recovered:
+                findings.update(recovered_findings)
+                calls += recovered_calls
         return findings, calls
 
-    batches = [
-        list(range(start, min(start + AUDIT_BATCH_SIZE, len(criteria) + 1)))
-        for start in range(1, len(criteria) + 1, AUDIT_BATCH_SIZE)
-    ]
+    batches = _audit_criterion_batches(evidence_by_number)
     batch_results = await asyncio.gather(*(assess_batch(batch) for batch in batches))
     findings: dict[int, dict[str, str]] = {}
     model_calls = criteria_calls
@@ -804,6 +938,9 @@ async def audit_folder_against_reference(
         "audit_reference": audit_relative_path,
         "client_directory": client_directory,
         "criteria_count": len(criteria),
+        "criteria_cache_hit": criteria_cache_hit,
+        "assessment_batch_count": len(batches),
+        "assessment_batch_size": AUDIT_BATCH_SIZE,
         "source_count": len(pdf_paths) + len(readable_text_paths),
         "source_register_count": len(source_register),
         "pdf_count": len(pdf_paths),

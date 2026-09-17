@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from agent.artifact_store import MemoryArtifactStore, memory_artifact_store
 from agent.base import DelegationContext, SpecialistAgent
@@ -16,6 +18,73 @@ from providers.albert import AlbertClient
 from services.pdf_audit import audit_folder_against_reference
 from services.pdf_memory import find_pdf_memory
 from services.local_files import create_local_text_file
+
+
+EVIDENCE_CITATION_PATTERN = re.compile(
+    r"\[([^\[\]\r\n]+?),\s*((?:p\.\s*(\d+))|(?:lines?\s+(\d+)(?:-(\d+))?))\]",
+    re.IGNORECASE,
+)
+
+
+def _source_path_for_citation(
+    citation: str, source_paths: list[str]
+) -> str | None:
+    normalized = citation.strip().replace("\\", "/").casefold()
+    exact = [path for path in source_paths if path.casefold() == normalized]
+    if exact:
+        return exact[0]
+    basename = Path(normalized).name
+    matches = [path for path in source_paths if Path(path).name.casefold() == basename]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _compact_evidence(value: str) -> str:
+    """Keep evidence wording while hiding local directory structure."""
+    def replace_citation(match: re.Match[str]) -> str:
+        filename = Path(match.group(1).replace("\\", "/")).name
+        locator = (
+            f"p. {match.group(3)}"
+            if match.group(3)
+            else f"lines {match.group(4)}-{match.group(5) or match.group(4)}"
+        )
+        return f"[{filename}, {locator}]"
+
+    return EVIDENCE_CITATION_PATTERN.sub(replace_citation, value)
+
+
+def _evidence_links(
+    value: str,
+    *,
+    source_paths: list[str],
+    backend_url: str,
+) -> str:
+    """Create Grist Markdown links for every cited PDF or text source."""
+    links: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for match in EVIDENCE_CITATION_PATTERN.finditer(value):
+        relative_path = _source_path_for_citation(match.group(1), source_paths)
+        if relative_path is None:
+            continue
+        page = int(match.group(3)) if match.group(3) else None
+        locator = (
+            f"p. {page}"
+            if page is not None
+            else f"lines {match.group(4)}-{match.group(5) or match.group(4)}"
+        )
+        fingerprint = (relative_path.casefold(), locator.casefold())
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        label = f"{Path(relative_path).name}, {locator}"
+        clean_label = label.replace("[", "\\[").replace("]", "\\]")
+        url = (
+            f"{backend_url.rstrip('/')}/api/local-files/view"
+            f"?path={quote(relative_path, safe='')}"
+        )
+        if page is not None:
+            url += f"&page={page}#page={page}"
+        links.append(f"[{clean_label}]({url})")
+    return " · ".join(links)
 
 
 class LocalFilesAuditFolderAgent(SpecialistAgent):
@@ -92,6 +161,7 @@ class LocalFilesAuditFolderAgent(SpecialistAgent):
         artifact_store: MemoryArtifactStore = memory_artifact_store,
         client: Any | None = None,
         model: str | None = None,
+        backend_url: str = "http://127.0.0.1:8000",
     ) -> None:
         self.root = root
         self.summarizer = summarizer
@@ -107,6 +177,7 @@ class LocalFilesAuditFolderAgent(SpecialistAgent):
         self.artifact_store = artifact_store
         self._client = client
         self._model = model
+        self.backend_url = backend_url
 
     def _model_runtime(self) -> tuple[Any, str]:
         if self._client is not None and self._model is not None:
@@ -197,19 +268,36 @@ class LocalFilesAuditFolderAgent(SpecialistAgent):
                     "requirement",
                     "verdict",
                     "reference evidence",
+                    "reference sources",
                     "client evidence",
+                    "client sources",
                     "reasoning",
                     "corrective action",
                 ]
             )
+            source_paths = [
+                source["relative_path"]
+                for source in result["sources"]
+                if isinstance(source.get("relative_path"), str)
+            ]
             for finding in result["findings"]:
                 writer.writerow(
                     [
                         finding["name"],
                         finding["requirement"],
                         finding["status"],
-                        finding["reference_evidence"],
-                        finding["client_evidence"],
+                        _compact_evidence(finding["reference_evidence"]),
+                        _evidence_links(
+                            finding["reference_evidence"],
+                            source_paths=source_paths,
+                            backend_url=self.backend_url,
+                        ),
+                        _compact_evidence(finding["client_evidence"]),
+                        _evidence_links(
+                            finding["client_evidence"],
+                            source_paths=source_paths,
+                            backend_url=self.backend_url,
+                        ),
                         finding["reasoning"],
                         finding["corrective_action"],
                     ]
@@ -230,11 +318,15 @@ class LocalFilesAuditFolderAgent(SpecialistAgent):
             "sources": result.pop("sources"),
             "audit_reference": result["audit_reference"],
             "client_directory": result["client_directory"],
+            "overall_result": result["overall_result"],
+            "complete": result["complete"],
+            "limitations": list(result["limitations"]),
         }
         verdict_counts: dict[str, int] = {}
         for finding in audit_payload["findings"]:
             verdict = str(finding["status"])
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+        audit_payload["verdict_counts"] = verdict_counts
         audit_artifact = self.artifact_store.put(
             audit_payload,
             kind="audit_report",

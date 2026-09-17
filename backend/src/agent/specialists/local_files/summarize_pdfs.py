@@ -19,8 +19,8 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
         "Privately prepare every PDF from one or several bounded local folders, or "
         "from an explicit path list, in one operation. Use automatically when the "
         "user asks to analyze several folders or documents. Each document is analyzed "
-        "independently. Up-to-date memories are skipped unless refresh is true, and "
-        "one failure does not stop the remaining files."
+        "independently. Up-to-date memories are reused and only PDFs whose content "
+        "changed are regenerated. One failure does not stop the remaining files."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -57,13 +57,6 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
                 "minimum": 0,
                 "maximum": 5,
                 "description": "Maximum folder depth. Defaults to 5.",
-            },
-            "refresh": {
-                "type": "boolean",
-                "description": (
-                    "Regenerate memories even when the source PDF has not changed. "
-                    "Defaults to false."
-                ),
             },
         },
         "oneOf": [
@@ -175,9 +168,6 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
         self, arguments: dict[str, Any], context: DelegationContext
     ) -> dict[str, Any]:
         del context
-        refresh = arguments.get("refresh", False)
-        if not isinstance(refresh, bool):
-            raise LocalFilesError("refresh must be a boolean")
         paths, limited, limitation = self._paths(arguments)
         if not paths:
             return {
@@ -199,7 +189,7 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
                 self.root,
                 source_relative_path=relative_path,
             )
-            if existing and existing["up_to_date"] and not refresh:
+            if existing and existing["up_to_date"]:
                 return {
                     "status": "skipped",
                     "reason": "up_to_date",

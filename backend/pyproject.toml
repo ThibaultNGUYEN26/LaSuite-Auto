@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Backend for the Auto conversational chatbot"
 requires-python = ">=3.12"
 dependencies = [
+    "openapi-client",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.9",
@@ -19,3 +20,6 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+openapi-client = { path = "API/drive_client", editable = true }

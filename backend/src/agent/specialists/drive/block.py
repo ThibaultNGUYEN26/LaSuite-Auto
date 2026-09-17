@@ -11,6 +11,7 @@ from agent.specialists.drive import (
     DriveConfigAgent,
     DriveCreateFileAgent,
     DriveCreateFilesAgent,
+    DriveCreateFolderAgent,
     DriveDownloadFolderAgent,
     DriveListItemsAgent,
     DriveReadImageAgent,
@@ -49,6 +50,15 @@ def create_block() -> AgentBlock:
                 "Read public Drive instance configuration.",
                 side_effect="external_read",
                 permissions=("drive.read",),
+            ),
+            CapabilityManifest(
+                "drive_create_folder",
+                "Create a top-level or nested folder in Drive and return its reusable folder reference.",
+                side_effect="external_write",
+                permissions=("drive.write",),
+                accepts=(ArtifactContract("folder", ("inode/directory",)),),
+                produces=(ArtifactContract("folder", ("inode/directory",)),),
+                confirmation_required=True,
             ),
             CapabilityManifest(
                 "drive_create_file",
@@ -129,6 +139,11 @@ def create_block() -> AgentBlock:
         ),
         workflows=(
             WorkflowManifest(
+                "drive.create_folder_and_file",
+                "Create a Drive folder, then create or upload a file inside it.",
+                ("drive_create_folder", "drive_create_file"),
+            ),
+            WorkflowManifest(
                 "drive.read_pdf",
                 "Find a PDF in Drive and read page-labelled content for grounded answers.",
                 ("drive_list_items", "drive_read_pdf"),
@@ -146,6 +161,11 @@ def create_block() -> AgentBlock:
         ),
         agents=(
             DriveConfigAgent(settings.drive_base_url),
+            DriveCreateFolderAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                csrf_token=settings.drive_csrf_token,
+            ),
             DriveCreateFileAgent(
                 settings.drive_base_url,
                 settings.drive_session_id,

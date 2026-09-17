@@ -1,6 +1,6 @@
 import unittest
 
-from providers.albert import _chat_completion_payload
+from providers.albert import AlbertClient, _chat_completion_payload
 
 
 class AlbertChatPayloadTests(unittest.TestCase):
@@ -36,6 +36,21 @@ class AlbertChatPayloadTests(unittest.TestCase):
 
         self.assertEqual(payload["tools"], tools)
         self.assertEqual(payload["tool_choice"], "auto")
+
+
+class AlbertConnectionPoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reuses_and_closes_persistent_async_client(self):
+        provider = AlbertClient("test-key", base_url="https://albert.example/v1")
+
+        first = provider._get_async_client()
+        second = provider._get_async_client()
+
+        self.assertIs(first, second)
+        self.assertFalse(first.is_closed)
+
+        await provider.aclose()
+
+        self.assertTrue(first.is_closed)
 
 
 if __name__ == "__main__":

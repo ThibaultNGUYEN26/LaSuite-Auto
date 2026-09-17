@@ -91,3 +91,8 @@ async def generate_chat_title(prompt: str, response: str) -> str:
             model=model,
         )
     raise AgentError(f"Unknown AUTO_PROVIDER: {settings.provider}")
+
+
+async def close_runtime() -> None:
+    """Release persistent provider connections during application shutdown."""
+    await AlbertClient.close_all()

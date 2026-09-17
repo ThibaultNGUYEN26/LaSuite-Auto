@@ -305,6 +305,7 @@ def create_block() -> AgentBlock:
                 max_total_pages=settings.pdf_search_max_pages,
                 max_create_bytes=settings.local_files_max_create_bytes,
                 batch_summarizer=pdf_batch_summarizer,
+                backend_url=settings.backend_url,
             ),
             LocalFilesSearchPdfMemoryAgent(settings.local_files_root),
             LocalFilesReadTextAgent(

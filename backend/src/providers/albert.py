@@ -1,6 +1,8 @@
 from __future__ import annotations
+import asyncio
 import json
 import ssl
+import weakref
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -34,6 +36,8 @@ def _chat_completion_payload(
 
 
 class AlbertClient:
+    _instances: weakref.WeakSet["AlbertClient"] = weakref.WeakSet()
+
     def __init__(
         self, api_key: str, *, base_url: str, timeout: float = 60.0
     ) -> None:
@@ -42,6 +46,31 @@ class AlbertClient:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        self._async_client: httpx.AsyncClient | None = None
+        self._instances.add(self)
+
+    def _get_async_client(self) -> httpx.AsyncClient:
+        """Return this provider's persistent, connection-pooled HTTP client."""
+        if self._async_client is None or self._async_client.is_closed:
+            self._async_client = httpx.AsyncClient(
+                timeout=self.timeout,
+                verify=self._ssl_context,
+            )
+        return self._async_client
+
+    async def aclose(self) -> None:
+        """Close connections owned by this provider instance."""
+        if self._async_client is not None and not self._async_client.is_closed:
+            await self._async_client.aclose()
+
+    @classmethod
+    async def close_all(cls) -> None:
+        """Close every live Albert connection pool during application shutdown."""
+        await asyncio.gather(
+            *(client.aclose() for client in tuple(cls._instances)),
+            return_exceptions=True,
+        )
 
     def _request(
         self, path: str, *, body: dict[str, Any] | None = None
@@ -172,62 +201,56 @@ class AlbertClient:
 
         tool_call_fragments: dict[int, dict[str, Any]] = {}
         try:
-            # httpx defaults to certifi, which does not include certificates
-            # installed in the Windows trust store (for example an internal
-            # administration proxy CA). Use the OS trust store consistently,
-            # just as the rest of the desktop application does.
-            ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            async with httpx.AsyncClient(
-                timeout=self.timeout,
-                verify=ssl_context,
-            ) as client:
-                async with client.stream(
-                    "POST", endpoint, headers=headers, json=payload
-                ) as response:
-                    if response.status_code >= 400:
-                        body = await response.aread()
+            # The pool uses the Windows trust store and remains alive across
+            # calls, avoiding a new TCP/TLS handshake for every model request.
+            client = self._get_async_client()
+            async with client.stream(
+                "POST", endpoint, headers=headers, json=payload
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise AlbertAPIError(
+                        f"Albert returned HTTP {response.status_code} for "
+                        f"POST {endpoint}: {body.decode(errors='replace')}"
+                    )
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError as exc:
                         raise AlbertAPIError(
-                            f"Albert returned HTTP {response.status_code} for "
-                            f"POST {endpoint}: {body.decode(errors='replace')}"
+                            "Albert returned an invalid stream chunk"
+                        ) from exc
+                    try:
+                        delta = chunk["choices"][0]["delta"]
+                    except (KeyError, IndexError, TypeError):
+                        continue
+                    content = delta.get("content")
+                    if content:
+                        yield {"type": "content", "delta": content}
+                    for fragment in delta.get("tool_calls") or []:
+                        index = fragment.get("index", 0)
+                        entry = tool_call_fragments.setdefault(
+                            index,
+                            {
+                                "id": None,
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
                         )
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data = line[len("data:") :].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError as exc:
-                            raise AlbertAPIError(
-                                "Albert returned an invalid stream chunk"
-                            ) from exc
-                        try:
-                            delta = chunk["choices"][0]["delta"]
-                        except (KeyError, IndexError, TypeError):
-                            continue
-                        content = delta.get("content")
-                        if content:
-                            yield {"type": "content", "delta": content}
-                        for fragment in delta.get("tool_calls") or []:
-                            index = fragment.get("index", 0)
-                            entry = tool_call_fragments.setdefault(
-                                index,
-                                {
-                                    "id": None,
-                                    "type": "function",
-                                    "function": {"name": "", "arguments": ""},
-                                },
-                            )
-                            if fragment.get("id"):
-                                entry["id"] = fragment["id"]
-                            function_fragment = fragment.get("function") or {}
-                            if function_fragment.get("name"):
-                                entry["function"]["name"] += function_fragment["name"]
-                            if function_fragment.get("arguments"):
-                                entry["function"]["arguments"] += function_fragment[
-                                    "arguments"
-                                ]
+                        if fragment.get("id"):
+                            entry["id"] = fragment["id"]
+                        function_fragment = fragment.get("function") or {}
+                        if function_fragment.get("name"):
+                            entry["function"]["name"] += function_fragment["name"]
+                        if function_fragment.get("arguments"):
+                            entry["function"]["arguments"] += function_fragment[
+                                "arguments"
+                            ]
         except httpx.HTTPError as exc:
             raise AlbertAPIError(f"Could not reach {endpoint}: {exc}") from exc
 

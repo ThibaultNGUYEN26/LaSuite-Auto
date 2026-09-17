@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from copy import deepcopy
@@ -18,7 +19,7 @@ from agent.specialists.local_files.summarize_pdfs import (
     LocalFilesSummarizePdfsAgent,
 )
 from agent.errors import PdfError
-from services.pdf_memory import save_pdf_memory
+from services.pdf_memory import find_pdf_memory, save_pdf_memory
 
 
 def pdf_bytes(*pages: str) -> bytes:
@@ -121,6 +122,58 @@ class PdfMemoryTests(unittest.IsolatedAsyncioTestCase):
                 matches["matches"][0]["source_relative_path"],
                 "Downloads/MX Linux Guide.pdf",
             )
+
+            requests_before_reuse = len(client.requests)
+            reused = await registry.dispatch_async(
+                "local_files_summarize_pdf",
+                json.dumps({"relative_path": "Downloads/MX Linux Guide.pdf"}),
+                DelegationContext(conversation=()),
+            )
+            self.assertEqual(reused["status"], "reused")
+            self.assertEqual(reused["pages_analyzed"], 2)
+            self.assertIn("Use VLC for video", reused["analysis"])
+            self.assertEqual(len(client.requests), requests_before_reuse)
+
+    async def test_content_hash_ignores_timestamp_only_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "guide.pdf"
+            source.write_bytes(b"stable PDF bytes")
+            save_pdf_memory(
+                root,
+                source_relative_path="guide.pdf",
+                title="Stable Guide",
+                summary_markdown="## Overview\nStable.",
+                total_pages=1,
+            )
+
+            stat = source.stat()
+            os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+
+            memory = find_pdf_memory(root, source_relative_path="guide.pdf")
+            self.assertIsNotNone(memory)
+            self.assertTrue(memory["up_to_date"])
+
+    async def test_content_hash_detects_same_size_same_timestamp_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "guide.pdf"
+            source.write_bytes(b"first PDF content")
+            save_pdf_memory(
+                root,
+                source_relative_path="guide.pdf",
+                title="Changing Guide",
+                summary_markdown="## Overview\nFirst.",
+                total_pages=1,
+            )
+            stat = source.stat()
+
+            source.write_bytes(b"other PDF content")
+            os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+            memory = find_pdf_memory(root, source_relative_path="guide.pdf")
+            self.assertIsNotNone(memory)
+            self.assertFalse(memory["up_to_date"])
 
     async def test_refreshes_the_same_managed_memory_instead_of_duplicating_it(self):
         with tempfile.TemporaryDirectory() as directory:

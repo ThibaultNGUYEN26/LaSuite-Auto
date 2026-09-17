@@ -183,6 +183,11 @@ class GristImportCsvAgent(SpecialistAgent):
             filename=filename,
             csv_data=data,
             org_id=self.org_id,
+            markdown_columns=tuple(
+                header.strip()
+                for header in rows[0]
+                if header.strip().casefold() in {"reference sources", "client sources"}
+            ),
         )
         result.update(
             {
