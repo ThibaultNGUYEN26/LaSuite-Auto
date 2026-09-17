@@ -8,7 +8,11 @@ from unittest.mock import patch
 from agent.base import DelegationContext
 from agent.errors import GristAPIError
 from agent.specialists.grist import GristImportCsvAgent
-from services.grist import import_csv_document, list_grist_workspaces
+from services.grist import (
+    format_grist_markdown_columns,
+    import_csv_document,
+    list_grist_workspaces,
+)
 
 
 class FakeResponse(io.BytesIO):
@@ -83,6 +87,51 @@ class GristServiceTests(unittest.TestCase):
     def test_requires_api_key_before_network_access(self):
         with self.assertRaisesRegex(GristAPIError, "GRIST_API_KEY"):
             list_grist_workspaces("http://grist:8484", "", org_id="docs")
+
+    @patch("services.grist.urlopen")
+    def test_formats_imported_evidence_sources_as_markdown_links(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"tables": [{"id": "Audit_Matrix"}]}),
+            FakeResponse(
+                {
+                    "columns": [
+                        {"id": "criterion", "fields": {"label": "criterion"}},
+                        {
+                            "id": "reference_sources",
+                            "fields": {"label": "reference sources"},
+                        },
+                        {
+                            "id": "client_sources",
+                            "fields": {"label": "client sources"},
+                        },
+                    ]
+                }
+            ),
+            FakeResponse({"columns": []}),
+        ]
+
+        formatted = format_grist_markdown_columns(
+            "http://grist:8484",
+            "secret-key",
+            document_id="audit-doc",
+            column_labels=("reference sources", "client sources"),
+        )
+
+        patch_request = urlopen.call_args_list[2].args[0]
+        patch_payload = json.loads(patch_request.data)
+        self.assertEqual(
+            formatted,
+            ["reference sources", "client sources"],
+        )
+        self.assertEqual(patch_request.get_method(), "PATCH")
+        self.assertEqual(
+            patch_request.full_url,
+            "http://grist:8484/api/docs/audit-doc/tables/Audit_Matrix/columns",
+        )
+        self.assertEqual(
+            json.loads(patch_payload["columns"][0]["fields"]["widgetOptions"]),
+            {"widget": "Markdown"},
+        )
 
 
 class GristImportCsvAgentTests(unittest.TestCase):

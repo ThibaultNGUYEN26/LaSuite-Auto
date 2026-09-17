@@ -95,7 +95,7 @@ def create_block() -> AgentBlock:
             ),
             PdfRenderAuditAgent(
                 settings.local_files_root,
-                max_body_characters=settings.pdf_max_create_characters,
+                max_report_bytes=settings.pdf_max_report_bytes,
             ),
             PdfRunScriptAgent(settings.local_files_root),
         ),

@@ -88,7 +88,8 @@ SYSTEM_PROMPT = (
     "audit capability returns a structured audit-report artifact and the user asks "
     "for a PDF, pass that artifact directly to a compatible PDF renderer. Never copy "
     "the complete audit body into another capability call or reproduce it in tool "
-    "arguments. If an "
+    "arguments. If the dedicated audit renderer fails, report that failure; never "
+    "replace it with a generic PDF creator, a script, or a previous CSV/report. If an "
     "external write returns a URL or "
     "permalink, include it as a clickable Markdown link in the final answer, together "
     "with the local output paths. If no URL is returned, provide the resource ID and "
@@ -112,6 +113,232 @@ STEP_LIMIT_PROMPT = (
     "ask one focused question that would let the work continue. Do not mention tools, "
     "steps, internal limits, the backend, or implementation errors."
 )
+
+
+def _is_capability_catalog_request(conversation: list[ChatMessage]) -> bool:
+    """Recognize explicit requests to inspect the installed capability catalog."""
+    latest_user = next(
+        (
+            message.content.lower()
+            for message in reversed(conversation)
+            if message.role == "user"
+        ),
+        "",
+    )
+    subjects = (
+        "tool",
+        "capabilit",
+        "block",
+        "bloc",
+        "specialist",
+        "agent available",
+        "agent you have",
+        "outil",
+        "fonctionnalit",
+    )
+    catalog_actions = (
+        "list",
+        "show",
+        "catalog",
+        "available",
+        "what can you do",
+        "what do you have",
+        "liste",
+        "montre",
+        "disponible",
+        "qu'est-ce que tu peux",
+        "que peux-tu",
+    )
+    return any(subject in latest_user for subject in subjects) and any(
+        action in latest_user for action in catalog_actions
+    )
+
+
+def _render_capability_catalog(block_registry: BlockRegistry) -> str:
+    """Render the live registry without asking the model to infer its contents."""
+    blocks = block_registry.detailed_catalog()
+    capability_count = sum(len(block["capabilities"]) for block in blocks)
+    lines = [
+        f"Auto currently has {len(blocks)} blocks and {capability_count} capabilities registered.",
+        "",
+    ]
+    for block in blocks:
+        lines.extend((f"## {block['name']}", "", str(block["description"])))
+        permissions = block["permissions"]
+        lines.extend(
+            (
+                "",
+                "Block permissions: "
+                + (", ".join(permissions) if permissions else "none declared"),
+            )
+        )
+        required_config = block["required_config"]
+        if required_config:
+            config_names = [
+                f"`{item['name']}`"
+                + (" (required)" if item["required"] else " (optional)")
+                for item in required_config
+            ]
+            lines.append("Configuration: " + ", ".join(config_names))
+
+        for capability in block["capabilities"]:
+            flags = []
+            if capability["internal"]:
+                flags.append("automatic/internal")
+            if capability["confirmation_required"]:
+                flags.append("confirmation required")
+            suffix = f" ({', '.join(flags)})" if flags else ""
+            lines.extend(
+                (
+                    "",
+                    f"### `{capability['name']}`{suffix}",
+                    "",
+                    str(capability["description"]),
+                    "",
+                    f"- Side effect: `{capability['side_effect']}`",
+                    "- Permissions: "
+                    + (
+                        ", ".join(capability["permissions"])
+                        if capability["permissions"]
+                        else "none declared"
+                    ),
+                    "- Accepts: "
+                    + (
+                        ", ".join(item["kind"] for item in capability["accepts"])
+                        if capability["accepts"]
+                        else "no artifact input"
+                    ),
+                    "- Produces: "
+                    + (
+                        ", ".join(item["kind"] for item in capability["produces"])
+                        if capability["produces"]
+                        else "no declared artifact"
+                    ),
+                    "- Input schema:",
+                    "",
+                    "```json",
+                    json.dumps(capability["parameters"], ensure_ascii=False, indent=2),
+                    "```",
+                )
+            )
+
+        workflows = block["workflows"]
+        if workflows:
+            lines.extend(("", "Workflows:"))
+            for workflow in workflows:
+                route = " → ".join(workflow["capabilities"])
+                lines.append(
+                    f"- `{workflow['name']}`: {workflow['description']} ({route})"
+                )
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _requests_corpus_document_analysis(conversation: list[ChatMessage]) -> bool:
+    """Detect an explicit descriptive analysis of a document collection."""
+    latest_user = next(
+        (
+            message.content.casefold()
+            for message in reversed(conversation)
+            if message.role == "user"
+        ),
+        "",
+    )
+    analysis_actions = (
+        "analyze",
+        "analyse",
+        "summarize",
+        "summarise",
+        "summary",
+        "résume",
+        "resumé",
+        "résumé",
+    )
+    collection_terms = (
+        "all documents",
+        "all the documents",
+        "every document",
+        "documents from",
+        "client folder",
+        "client in",
+        "folder",
+        "corpus",
+        "tous les documents",
+        "tous les fichiers",
+        "chaque document",
+        "dossier",
+    )
+    excluded_outcomes = (
+        "audit",
+        "compliance",
+        "conformity",
+        "conformité",
+        "compare",
+        "comparison",
+        "comparer",
+    )
+    negative_instruction = any(
+        phrase in latest_user
+        for phrase in (
+            "do not",
+            "don't",
+            "without",
+            "not yet",
+            "pas encore",
+            "sans audit",
+            "ne compare",
+        )
+    )
+    return (
+        any(action in latest_user for action in analysis_actions)
+        and any(term in latest_user for term in collection_terms)
+        and (
+            negative_instruction
+            or not any(outcome in latest_user for outcome in excluded_outcomes)
+        )
+    )
+
+
+def _required_outcome_instruction(capabilities: tuple[str, ...]) -> str:
+    names = ", ".join(capabilities)
+    return (
+        "\n\nThis request explicitly covers descriptive analysis of a document "
+        "collection. Complete one registered capability that produces the "
+        f"document_analysis outcome before answering: {names}. Use primitive file "
+        "listing or reading only to locate the collection; do not replace the "
+        "bounded corpus capability with one call per file. The corpus capability "
+        "performs all private document preparation automatically."
+    )
+
+
+def _has_completed_required_outcome(
+    execution_context: list[dict[str, Any]],
+    capabilities: tuple[str, ...],
+) -> bool:
+    """Confirm an outcome ran successfully, including declared PDF preparation."""
+    for entry in execution_context:
+        if entry.get("capability") not in capabilities:
+            continue
+        result = entry.get("result")
+        if not isinstance(result, dict) or result.get("error"):
+            continue
+        preparation = result.get("pdf_memories")
+        if not isinstance(preparation, dict):
+            return True
+        requested = preparation.get("requested")
+        completed = sum(
+            value
+            for key in ("created", "updated", "skipped")
+            if isinstance((value := preparation.get(key)), int)
+        )
+        if (
+            isinstance(requested, int)
+            and completed == requested
+            and preparation.get("failed", 0) == 0
+            and preparation.get("limited") is not True
+        ):
+            return True
+    return False
 
 
 def _append_resource_links(
@@ -238,10 +465,25 @@ class OrchestratorAgent:
     async def run_stream(
         self, conversation: list[ChatMessage]
     ) -> AsyncIterator[AgentEvent]:
+        if self.block_registry is not None and _is_capability_catalog_request(
+            conversation
+        ):
+            content = _render_capability_catalog(self.block_registry)
+            yield AgentEvent("step_start", {"step": 1, "max_steps": self.max_steps})
+            yield AgentEvent("token", {"step": 1, "delta": content})
+            yield AgentEvent(
+                "step_complete",
+                {"step": 1, "content": content, "tool_calls": []},
+            )
+            yield AgentEvent("final", {"content": content})
+            return
+
         active_registry = self.registry
         planning_prompt = SYSTEM_PROMPT
         selected_blocks: tuple[str, ...] = ()
         execution_context: list[dict[str, Any]] = []
+        requires_corpus_analysis = _requests_corpus_document_analysis(conversation)
+        required_outcome_capabilities: tuple[str, ...] = ()
         if self.block_registry is not None:
             selected_blocks = await select_blocks(
                 self.albert,
@@ -250,6 +492,12 @@ class OrchestratorAgent:
                 blocks=self.block_registry,
             )
             active_registry = self.block_registry.agent_registry(selected_blocks)
+            if requires_corpus_analysis:
+                required_outcome_capabilities = (
+                    self.block_registry.capabilities_producing(
+                        "document_analysis", selected_blocks
+                    )
+                )
             planning_prompt += (
                 "\n\nSelected capability manifests and known workflow routes:\n"
                 + json.dumps(
@@ -257,6 +505,10 @@ class OrchestratorAgent:
                     ensure_ascii=False,
                 )
             )
+            if required_outcome_capabilities:
+                planning_prompt += _required_outcome_instruction(
+                    required_outcome_capabilities
+                )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": planning_prompt},
             *(
@@ -295,6 +547,27 @@ class OrchestratorAgent:
             )
 
             if not tool_calls:
+                required_outcome_missing = (
+                    required_outcome_capabilities
+                    and not _has_completed_required_outcome(
+                        execution_context,
+                        required_outcome_capabilities,
+                    )
+                )
+                if required_outcome_missing and step < self.max_steps:
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "The requested collection analysis is not complete. "
+                                "Do not answer yet. Call one of the required bounded "
+                                "corpus capabilities now: "
+                                + ", ".join(required_outcome_capabilities)
+                                + "."
+                            ),
+                        }
+                    )
+                    continue
                 if not isinstance(content, str) or not content.strip():
                     raise AgentError("Albert returned an empty final answer")
                 content = _append_resource_links(content, execution_context)
@@ -360,6 +633,12 @@ class OrchestratorAgent:
                     active_registry = self.block_registry.agent_registry(
                         selected_blocks
                     )
+                    if requires_corpus_analysis:
+                        required_outcome_capabilities = (
+                            self.block_registry.capabilities_producing(
+                                "document_analysis", selected_blocks
+                            )
+                        )
                     planning_prompt = SYSTEM_PROMPT + (
                         "\n\nSelected capability manifests and known workflow "
                         "routes:\n"
@@ -368,6 +647,10 @@ class OrchestratorAgent:
                             ensure_ascii=False,
                         )
                     )
+                    if required_outcome_capabilities:
+                        planning_prompt += _required_outcome_instruction(
+                            required_outcome_capabilities
+                        )
                     messages[0]["content"] = planning_prompt
 
         synthesis_step = self.max_steps + 1

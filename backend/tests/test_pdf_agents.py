@@ -228,17 +228,108 @@ class PdfRenderAnalysisAgentTests(unittest.TestCase):
 
 
 class PdfRenderAuditAgentTests(unittest.TestCase):
+    def test_preserves_all_54_findings_and_16_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = MemoryArtifactStore()
+            sources = [
+                {
+                    "source_id": "REF" if index == 0 else f"SRC-{index:03d}",
+                    "role": "Audit reference" if index == 0 else "Client evidence",
+                    "name": f"source-{index}.pdf",
+                    "type": "PDF",
+                    "relative_path": f"AUTO/source-{index}.pdf",
+                    "retrieval": "Open at the cited page.",
+                }
+                for index in range(16)
+            ]
+            findings = [
+                {
+                    "criterion_number": number,
+                    "name": f"Critère {number}",
+                    "status": "COMPLIANT",
+                    "requirement": f"Exigence {number}",
+                    "reference_evidence": "[source-0.pdf, p. 1]",
+                    "client_evidence": f"[source-15.pdf, p. {number}]",
+                    "reasoning": "Évidence vérifiée.",
+                    "corrective_action": "Aucune.",
+                }
+                for number in range(1, 55)
+            ]
+            artifact = store.put(
+                {
+                    "client_directory": "Clients/Valdorne",
+                    "overall_result": "COMPLIANT",
+                    "complete": True,
+                    "limitations": [],
+                    "sources": sources,
+                    "findings": findings,
+                },
+                kind="audit_report",
+                media_type="application/vnd.lasuite.audit+json",
+                name="Valdorne audit",
+            )
+            agent = PdfRenderAuditAgent(root, artifact_store=store)
+
+            result = agent.execute(
+                {
+                    "artifact": artifact.tool_value(),
+                    "directory": ".",
+                    "file_name": "valdorne-audit",
+                },
+                DelegationContext(conversation=()),
+            )
+            extracted = "\n".join(
+                page.extract_text() or ""
+                for page in PdfReader(root / "valdorne-audit.pdf").pages
+            )
+
+            self.assertIn("SRC-015", extracted)
+            self.assertIn("Criterion 54: Critère 54", extracted)
+            self.assertIn("Évidence vérifiée", extracted)
+            self.assertEqual(result["verification"]["criteria_count"], 54)
+            self.assertEqual(result["verification"]["source_register_count"], 16)
+
     def test_renders_complete_audit_from_memory_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             store = MemoryArtifactStore()
             artifact = store.put(
                 {
-                    "audit": (
-                        "# Complete audit\n\n## Source register\n\n"
-                        "REF: checklist.pdf\n\n## Complete audit matrix\n\n"
-                        "Criterion 1: COMPLIANT [checklist.pdf, p. 1]"
-                    )
+                    "client_directory": "Clients/Valdorne",
+                    "overall_result": "COMPLIANT",
+                    "complete": True,
+                    "limitations": [],
+                    "sources": [
+                        {
+                            "source_id": "REF",
+                            "role": "Audit reference",
+                            "name": "checklist.pdf",
+                            "type": "PDF",
+                            "relative_path": "checklist.pdf",
+                            "retrieval": "Open at the cited page.",
+                        },
+                        {
+                            "source_id": "SRC-001",
+                            "role": "Client evidence",
+                            "name": "données.csv",
+                            "type": "CSV",
+                            "relative_path": "Clients/Valdorne/données.csv",
+                            "retrieval": "Open at the cited lines.",
+                        },
+                    ],
+                    "findings": [
+                        {
+                            "criterion_number": 1,
+                            "name": "Périmètre défini",
+                            "status": "COMPLIANT",
+                            "requirement": "Définir le périmètre.",
+                            "reference_evidence": "[checklist.pdf, p. 1]",
+                            "client_evidence": "[données.csv, lines 1-2]",
+                            "reasoning": "Les éléments concordent.",
+                            "corrective_action": "Aucune.",
+                        }
+                    ],
                 },
                 kind="audit_report",
                 media_type="application/vnd.lasuite.audit+json",
@@ -261,8 +352,66 @@ class PdfRenderAuditAgentTests(unittest.TestCase):
                 page.extract_text() or "" for page in PdfReader(target).pages
             )
             self.assertEqual(result["status"], "created")
-            self.assertIn("Complete audit matrix", extracted)
+            self.assertIn("Complete audit findings", extracted)
             self.assertIn("checklist.pdf, p. 1", extracted)
+            self.assertIn("données.csv", extracted)
+            self.assertIn("Périmètre défini", extracted)
+            self.assertEqual(result["verification"]["criteria_count"], 1)
+            self.assertEqual(result["verification"]["source_register_count"], 2)
+
+    def test_renders_audit_larger_than_generic_pdf_character_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = MemoryArtifactStore()
+            artifact = store.put(
+                {
+                    "client_directory": "Clients/Large",
+                    "complete": True,
+                    "limitations": [],
+                    "sources": [
+                        {
+                            "source_id": "REF",
+                            "role": "Audit reference",
+                            "name": "checklist.pdf",
+                            "type": "PDF",
+                            "relative_path": "checklist.pdf",
+                            "retrieval": "Open at the cited page.",
+                        }
+                    ],
+                    "findings": [
+                        {
+                            "criterion_number": 1,
+                            "name": "Large criterion",
+                            "status": "INSUFFICIENT EVIDENCE",
+                            "requirement": "Requirement " + "é" * 210_000,
+                            "reference_evidence": "[checklist.pdf, p. 1]",
+                            "client_evidence": "No supporting passage found.",
+                            "reasoning": "Evidence is incomplete.",
+                            "corrective_action": "Provide evidence.",
+                        }
+                    ],
+                },
+                kind="audit_report",
+                media_type="application/vnd.lasuite.audit+json",
+                name="Large audit",
+            )
+            agent = PdfRenderAuditAgent(
+                root,
+                artifact_store=store,
+                max_report_bytes=10 * 1024 * 1024,
+            )
+
+            result = agent.execute(
+                {
+                    "artifact": artifact.tool_value(),
+                    "directory": ".",
+                    "file_name": "large-audit",
+                },
+                DelegationContext(conversation=()),
+            )
+
+            self.assertEqual(result["status"], "created")
+            self.assertTrue((root / "large-audit.pdf").exists())
 
 
 class PdfRunScriptAgentTests(unittest.TestCase):

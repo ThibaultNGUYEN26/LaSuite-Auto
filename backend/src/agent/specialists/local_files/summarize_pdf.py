@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ from agent.errors import AlbertAPIError, LocalFilesError, PdfError
 from providers.albert import AlbertClient
 from services.local_files import read_local_pdf, resolve_local_file
 from services.pdf import extract_pdf_pages
-from services.pdf_memory import save_pdf_memory, summarize_pdf_pages
+from services.pdf_memory import load_pdf_memory, save_pdf_memory, summarize_pdf_pages
 
 
 class LocalFilesSummarizePdfAgent(SpecialistAgent):
@@ -76,6 +77,20 @@ class LocalFilesSummarizePdfAgent(SpecialistAgent):
         relative_path = arguments.get("relative_path")
         if not isinstance(relative_path, str):
             raise LocalFilesError("relative_path must be a string")
+        existing = load_pdf_memory(
+            self.root,
+            source_relative_path=relative_path,
+        )
+        if existing and existing["up_to_date"]:
+            return {
+                "status": "reused",
+                "source_relative_path": relative_path,
+                "title": existing["title"],
+                "pages_analyzed": existing["total_pages"],
+                "complete": True,
+                "ready_for_follow_up": True,
+                "analysis": existing["summary_markdown"],
+            }
         result = await self.summarize(relative_path, include_analysis=True)
         return {
             "status": "analyzed",
@@ -116,6 +131,7 @@ class LocalFilesSummarizePdfAgent(SpecialistAgent):
             title=title,
             summary_markdown=markdown,
             total_pages=len(pages),
+            source_sha256=sha256(pdf_bytes).hexdigest(),
         )
         result.update(
             {
