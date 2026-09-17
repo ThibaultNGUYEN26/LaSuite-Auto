@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import ANY, patch
 
 from fastapi.testclient import TestClient
@@ -85,6 +87,37 @@ class NewConversationEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class LocalEvidenceEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def test_serves_a_pdf_inline_for_page_aware_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Client").mkdir()
+            (root / "Client/evidence.pdf").write_bytes(b"%PDF-test")
+            with patch.object(settings, "local_files_root", root):
+                response = self.client.get(
+                    "/api/local-files/view",
+                    params={"path": "Client/evidence.pdf", "page": 3},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertTrue(response.headers["content-disposition"].startswith("inline;"))
+        self.assertEqual(response.content, b"%PDF-test")
+
+    def test_rejects_paths_outside_the_local_files_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(settings, "local_files_root", Path(directory)):
+                response = self.client.get(
+                    "/api/local-files/view",
+                    params={"path": "../secret.pdf", "page": 1},
+                )
+
+        self.assertEqual(response.status_code, 404)
 
 
 class ConversationTitleEndpointTests(unittest.TestCase):

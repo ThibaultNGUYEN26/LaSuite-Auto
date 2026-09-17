@@ -143,6 +143,7 @@ def import_csv_document(
     filename: str,
     csv_data: bytes,
     org_id: str | None = None,
+    markdown_columns: tuple[str, ...] = (),
     timeout: float = 60.0,
 ) -> dict[str, Any]:
     """Import CSV bytes as a new saved Grist document."""
@@ -185,7 +186,7 @@ def import_csv_document(
         name=clean_name,
         metadata={"workspace_id": workspace_id, "url": document_url},
     )
-    return {
+    result = {
         "status": "imported",
         "document_id": document_id,
         "document_name": clean_name,
@@ -194,6 +195,104 @@ def import_csv_document(
         "document_url": document_url,
         "artifact": artifact.tool_value(),
     }
+    if markdown_columns:
+        try:
+            result["markdown_columns"] = format_grist_markdown_columns(
+                base_url,
+                api_key,
+                document_id=document_id,
+                column_labels=markdown_columns,
+                timeout=timeout,
+            )
+        except GristAPIError as exc:
+            # The imported document remains useful even if presentation metadata
+            # cannot be updated on a particular Grist deployment.
+            result["formatting_warning"] = str(exc)
+    return result
+
+
+def format_grist_markdown_columns(
+    base_url: str,
+    api_key: str,
+    *,
+    document_id: str,
+    column_labels: tuple[str, ...],
+    timeout: float = 30.0,
+) -> list[str]:
+    """Apply Grist's Markdown cell format to imported evidence-link columns."""
+    encoded_document = quote(document_id.strip(), safe="")
+    headers = _authorization_headers(api_key)
+    tables_endpoint = urljoin(
+        f"{base_url.rstrip('/')}/",
+        f"api/docs/{encoded_document}/tables",
+    )
+    tables_payload = _read_json(
+        Request(tables_endpoint, headers=headers, method="GET"),
+        timeout=timeout,
+    )
+    tables = tables_payload.get("tables") if isinstance(tables_payload, dict) else None
+    table_id = next(
+        (
+            table.get("id")
+            for table in tables or []
+            if isinstance(table, dict)
+            and isinstance(table.get("id"), str)
+            and not table["id"].startswith("Grist")
+        ),
+        None,
+    )
+    if not table_id:
+        raise GristAPIError("The imported Grist document has no usable data table")
+
+    encoded_table = quote(table_id, safe="")
+    columns_endpoint = urljoin(
+        f"{base_url.rstrip('/')}/",
+        f"api/docs/{encoded_document}/tables/{encoded_table}/columns",
+    )
+    columns_payload = _read_json(
+        Request(columns_endpoint, headers=headers, method="GET"),
+        timeout=timeout,
+    )
+    columns = (
+        columns_payload.get("columns") if isinstance(columns_payload, dict) else None
+    )
+    requested = {label.strip().casefold() for label in column_labels if label.strip()}
+    updates = []
+    formatted = []
+    for column in columns or []:
+        fields = column.get("fields") if isinstance(column, dict) else None
+        label = fields.get("label") if isinstance(fields, dict) else None
+        column_id = column.get("id") if isinstance(column, dict) else None
+        if (
+            isinstance(label, str)
+            and label.casefold() in requested
+            and isinstance(column_id, str)
+        ):
+            updates.append(
+                {
+                    "id": column_id,
+                    "fields": {
+                        "type": "Text",
+                        "widgetOptions": json.dumps({"widget": "Markdown"}),
+                    },
+                }
+            )
+            formatted.append(label)
+    if not updates:
+        raise GristAPIError("Grist could not find the imported evidence-link columns")
+
+    patch_headers = dict(headers)
+    patch_headers["Content-Type"] = "application/json"
+    _read_json(
+        Request(
+            columns_endpoint,
+            data=json.dumps({"columns": updates}).encode("utf-8"),
+            headers=patch_headers,
+            method="PATCH",
+        ),
+        timeout=timeout,
+    )
+    return formatted
 
 
 def read_grist_table(

@@ -236,6 +236,45 @@ def _metadata_from_text(text: str) -> dict[str, Any] | None:
     return metadata if isinstance(metadata, dict) else None
 
 
+def _file_sha256(path: Path) -> str:
+    """Hash a source document without loading the whole file into memory."""
+    digest = sha256()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise PdfError(f"Could not fingerprint the source PDF: {exc}") from exc
+    return digest.hexdigest()
+
+
+def _upgrade_legacy_fingerprint(
+    path: Path,
+    *,
+    text: str,
+    metadata: dict[str, Any],
+    source_hash: str,
+) -> None:
+    """Add a hash to an old memory without regenerating its model-written summary."""
+    metadata = {**metadata, "source_sha256": source_hash}
+    first_newline = text.find("\n")
+    remainder = text[first_newline:] if first_newline >= 0 else ""
+    upgraded = (
+        f"{METADATA_PREFIX}{json.dumps(metadata, ensure_ascii=False)} -->"
+        f"{remainder}"
+    )
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(upgraded, encoding="utf-8", newline="\n")
+        temporary.replace(path)
+    except OSError:
+        # Cache migration must never prevent the existing memory from being reused.
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def find_pdf_memory(root: Path, *, source_relative_path: str) -> dict[str, Any] | None:
     """Return freshness information for a managed memory of one local PDF."""
     source = resolve_local_file(root, source_relative_path)
@@ -257,13 +296,28 @@ def find_pdf_memory(root: Path, *, source_relative_path: str) -> dict[str, Any] 
         metadata = _metadata_from_text(text)
         if not metadata or metadata.get("source_path") != source_relative_path:
             continue
+        stored_hash = metadata.get("source_sha256")
+        if isinstance(stored_hash, str) and len(stored_hash) == 64:
+            up_to_date = _file_sha256(source) == stored_hash
+        else:
+            # Memories created before content hashing was introduced remain usable.
+            up_to_date = (
+                metadata.get("source_size") == source_stat.st_size
+                and metadata.get("source_mtime_ns") == source_stat.st_mtime_ns
+            )
+            if up_to_date:
+                source_hash = _file_sha256(source)
+                _upgrade_legacy_fingerprint(
+                    candidate,
+                    text=text,
+                    metadata=metadata,
+                    source_hash=source_hash,
+                )
         return {
             "relative_path": candidate.relative_to(resolved_root).as_posix(),
             "source_relative_path": source_relative_path,
-            "up_to_date": (
-                metadata.get("source_size") == source_stat.st_size
-                and metadata.get("source_mtime_ns") == source_stat.st_mtime_ns
-            ),
+            "up_to_date": up_to_date,
+            "total_pages": metadata.get("total_pages"),
             "title": next(
                 (
                     line.removeprefix("# ").strip()
@@ -287,7 +341,9 @@ def load_pdf_memory(root: Path, *, source_relative_path: str) -> dict[str, Any] 
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise PdfError("Could not read the PDF memory") from exc
-    return {**found, "content": content}
+    sections = content.split("\n\n", 4)
+    summary_markdown = sections[4].strip() if len(sections) == 5 else content.strip()
+    return {**found, "content": content, "summary_markdown": summary_markdown}
 
 
 def save_pdf_memory(
@@ -297,6 +353,7 @@ def save_pdf_memory(
     title: str,
     summary_markdown: str,
     total_pages: int,
+    source_sha256: str | None = None,
 ) -> dict[str, Any]:
     source = resolve_local_file(root, source_relative_path)
     resolved_root = resolve_local_directory(root)
@@ -326,6 +383,10 @@ def save_pdf_memory(
         "source_name": source.name,
         "source_size": stat.st_size,
         "source_mtime_ns": stat.st_mtime_ns,
+        # A caller that already read the PDF can pass the hash of those exact bytes.
+        # If the file changes during analysis, the saved memory is then immediately
+        # considered stale instead of being associated with the newer file content.
+        "source_sha256": source_sha256 or _file_sha256(source),
         "total_pages": total_pages,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

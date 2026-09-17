@@ -234,13 +234,22 @@ class PdfFolderAuditTests(unittest.IsolatedAsyncioTestCase):
                 "requirement",
                 "verdict",
                 "reference evidence",
+                "reference sources",
                 "client evidence",
+                "client sources",
                 "reasoning",
                 "corrective action",
             ],
         )
         self.assertEqual(len(csv_rows), 3)
         self.assertEqual(csv_rows[1][0], "AI scope")
+        self.assertEqual(csv_rows[1][3], "[ISO42001.pdf, p. 1]")
+        self.assertTrue(csv_rows[1][4].startswith("[ISO42001.pdf, p. 1](http://"))
+        self.assertNotIn("AUTO/", csv_rows[1][3])
+        self.assertEqual(csv_rows[1][5], "[D01_scope.pdf, p. 1]")
+        self.assertIn("#page=1", csv_rows[1][6])
+        self.assertIn("[D02_risks.pdf, p. 1](http://", csv_rows[2][6])
+        self.assertIn("[D10_risk_register.csv, lines 1-2](http://", csv_rows[2][6])
 
     async def test_rejects_folder_without_supported_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

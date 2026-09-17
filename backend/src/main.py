@@ -1,17 +1,25 @@
-from fastapi import Depends, FastAPI, HTTPException, Request
+import mimetypes
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from agent.errors import AgentError
+from agent.errors import AgentError, LocalFilesError
 from agent.events import AgentEvent
-from agent.runtime import draft_workflow_from_messages, generate_chat_title, run_stream
+from agent.runtime import (
+    close_runtime,
+    draft_workflow_from_messages,
+    generate_chat_title,
+    run_stream,
+)
 from agent.specializations import list_specializations
 
 from config import settings
 from db import get_db, init_db
 from repositories import chat_repository
 from repositories import workflow_repository
+from services.local_files import resolve_local_file
 from schemas import (
     AgentSpecializationOut,
     ChatMessage,
@@ -26,6 +34,10 @@ from schemas import (
 
 app = FastAPI(title="Auto backend")
 
+VIEWABLE_EVIDENCE_EXTENSIONS = {
+    ".pdf", ".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log"
+}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -39,9 +51,35 @@ def on_startup() -> None:
     init_db()
 
 
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    await close_runtime()
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/local-files/view", response_class=FileResponse)
+def view_local_evidence(
+    path: str,
+    page: int = Query(default=1, ge=1),
+) -> FileResponse:
+    """Open local audit evidence inline; PDF URL fragments select the page."""
+    del page  # Browser PDF viewers consume the matching #page=N fragment.
+    try:
+        source = resolve_local_file(settings.local_files_root, path)
+    except LocalFilesError as exc:
+        raise HTTPException(status_code=404, detail="Evidence file not found") from exc
+    if source.suffix.lower() not in VIEWABLE_EVIDENCE_EXTENSIONS:
+        raise HTTPException(status_code=422, detail="This evidence type cannot be viewed")
+    return FileResponse(
+        source,
+        media_type=mimetypes.guess_type(source.name)[0] or "application/octet-stream",
+        filename=source.name,
+        content_disposition_type="inline",
+    )
 
 
 @app.post("/api/conversations/new")
