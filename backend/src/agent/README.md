@@ -1,367 +1,168 @@
-# Capability blocks
+# Agent architecture
 
-The orchestrator is a domain-agnostic reasoning loop. It knows how to select,
-chain, and evaluate capabilities, but it does not import or name Drive, local
-files, Grist, Python, or any future integration. `agent.runtime` discovers
-blocks, flattens their specialist agents into `AgentRegistry`, and gives that
-registry to the orchestrator.
+The backend is structured around a reusable planning loop and a set of domain-specific capability blocks. The orchestrator does not know about Drive, local files, PDFs, or Grist directly; it only sees the capabilities that are discovered at startup.
 
-The runtime performs two-stage routing: the first model call receives only
-compact block manifests, then the planning loop receives detailed schemas only
-for the selected blocks. Typed `Artifact` references connect outputs from one
-block to inputs of another. See `backend/BLOCKS.md` for the complete contributor
-contract.
+The current runtime flow is:
 
-Specialists are grouped by domain instead of being placed beside the
-orchestrator:
+1. `agent.blocks` discovers built-in and installed blocks.
+2. Each block exposes one or more `SpecialistAgent` objects.
+3. `AgentRegistry` compiles those agents into a single callable registry.
+4. `OrchestratorAgent` asks the model to select the most relevant capabilities, then executes them in order.
+5. Results are returned as typed artifacts and reused by later steps.
+
+This keeps the reasoning engine generic while letting integrations evolve without editing the orchestrator itself.
+
+## Folder layout
 
 ```text
-agent/
-  blocks.py
-  orchestrator.py
-  runtime.py
-  specialists/
-    drive/
-      block.py
-      config.py
-      list_items.py
-      read_image.py
-      read_pdf.py
-    local_files/
-      block.py
-      create_file.py
-      list_items.py
-      read_image.py
-      read_pdf.py
-    pdf/
-      block.py
-      apply_template.py
-      create_pdf.py
-      run_script.py
-services/
-  drive.py
-  image.py
-  local_files.py
-  pdf.py
+backend/src/
+├── agent/
+│   ├── base.py
+│   ├── blocks.py
+│   ├── errors.py
+│   ├── events.py
+│   ├── orchestrator.py
+│   ├── registry.py
+│   ├── runtime.py
+│   ├── selection.py
+│   ├── README.md
+│   ├── specialists/
+│   │   ├── code/
+│   │   ├── data_analysis/
+│   │   ├── drive/
+│   │   ├── grist/
+│   │   ├── local_files/
+│   │   ├── pdf/
+│   │   └── README.md
+│   ├── workflow_synthesizer.py
+│   └── ...
+├── providers/
+│   ├── albert.py
+│   ├── base.py
+│   ├── echo.py
+│   └── README.md
+├── repositories/
+│   ├── chat_repository.py
+│   ├── workflow_repository.py
+│   └── README.md
+├── services/
+│   ├── chat_title.py
+│   ├── drive.py
+│   ├── local_files.py
+│   ├── pdf_memory.py
+│   ├── pdf_search.py
+│   ├── text_content.py
+│   ├── ...
+│   └── README.md
+├── config.py
+├── db.py
+├── main.py
+├── models.py
+├── schemas.py
+└── ...
 ```
 
-A block owns an integration boundary and constructs one or more model-facing
-agents. An agent owns one capability and its input validation. A service owns
-reusable API details. The brain only receives the resulting JSON schemas.
+## Runtime and block composition
 
-## Reading a Drive PDF
+The runtime entry point is in [backend/src/runtime.py](../runtime.py) via the app composition layer, but the operational logic is split as follows:
 
-The coordinator now advertises three Drive tools:
+- `agent.blocks` defines discovery, manifest metadata, and block validation.
+- `agent.registry` wraps the selected specialist agents in a tool registry.
+- `agent.selection` picks the relevant block(s) and capabilities for a request.
+- `agent.orchestrator` runs the multi-step reasoning loop with the selected tools.
+- `agent.workflow_synthesizer` turns a conversation into a reusable workflow draft.
 
-- `drive_list_items` discovers files recursively and returns their UUIDs.
-- `drive_read_pdf` downloads one UUID with the authenticated Drive session and
-  reads its selectable text entirely in backend memory.
-- `drive_get_config` reads public instance configuration.
+The block manifest system is the contract between the orchestrator and the integrations:
 
-For a request such as "Summarize the PDF named budget.pdf in my Drive", Albert
-can first call `drive_list_items`, select the matching PDF UUID, then call
-`drive_read_pdf`. Scanned image-only PDFs return an explicit no-extractable-text
-error.
+- Each block has a name, description, permissions, and optional workflow definitions.
+- Each capability has a name, side effect classification, accepted artifact kinds, produced artifact kinds, and explicit config requirements.
+- Capabilities can be tagged as `internal` when they are preparation steps rather than user-visible actions.
 
-`drive_download_folder` copies all of My Files or one complete bounded Drive folder
-tree below `LOCAL_FILES_ROOT`, preserving nested folders, filenames, and original bytes.
-It creates a new local folder and never overwrites an existing path. Individual
-files are bounded by `DRIVE_MAX_DOWNLOAD_BYTES`; the batch is bounded by
-`DRIVE_MAX_FOLDER_DOWNLOAD_FILES`, `DRIVE_MAX_FOLDER_DOWNLOAD_BYTES`, and the
-five-level traversal limit. A failure or oversized file is reported without hiding
-the files that downloaded successfully.
+The orchestrator sees only these manifests at the first stage; it does not directly import the concrete integration code.
 
-## Reading a local PDF
+## Built-in capability domains
 
-`local_files_list_items` lists any relative directory below the configured
-`LOCAL_FILES_ROOT` (the current user's home folder by default) and returns safe
-relative paths. For example, the coordinator can select `Downloads`, `Documents`,
-or `Desktop` with the `directory` argument.
-`local_files_read_pdf` accepts one of those relative paths, reads the PDF into
-memory, and uses the same text extractor as the Drive specialist. Absolute
-paths and paths that escape the configured root are rejected.
+### Drive
+The Drive block is responsible for reading, creating, renaming, and downloading content in La Suite Drive. It includes capabilities such as:
 
-## Creating and using local folders
+- `drive_list_items`
+- `drive_get_config`
+- `drive_read_pdf`
+- `drive_search_pdfs`
+- `drive_read_text`
+- `drive_create_file`
+- `drive_create_files`
+- `drive_upload_file`
+- `drive_download_folder`
+- `drive_rename_file`
+- `drive_read_image`
 
-`local_files_create_folder` creates one folder under an existing directory and
-returns a typed folder artifact plus its relative path. The orchestrator can pass
-that path directly to `local_files_create_file`, the PDF creation capabilities, or
-`local_files_list_items`. This supports natural requests such as “Create a Client 1
-folder in Downloads and add audit-notes.txt inside it.” Existing paths are never
-overwritten, and all folder operations remain below `LOCAL_FILES_ROOT`.
+These calls are wrapped with authenticated session handling and bounded traversal/download limits.
 
-## Durable PDF memories
+### Local files
+The local-files block manages the configured `LOCAL_FILES_ROOT` and provides safe filesystem operations. It covers:
 
-`local_files_summarize_pdf` reads every extractable page of one local PDF using
-bounded map/reduce model calls. It creates a page-cited Markdown memory under
-`LOCAL_FILES_ROOT/memory/`, gives the file a title derived from its contents,
-and includes a relative link to the original PDF. Re-running it for the same
-source refreshes the managed memory instead of creating duplicates.
+- listing and creating local folders/files
+- bounded PDF text extraction
+- memory creation for durable PDF summaries
+- folder-level analysis and audit workflows
+- comparing two PDFs and auditing against a reference PDF
+- image and text reading
 
-This is an internal preparation capability. A user can simply ask to analyze,
-review, understand, or audit a PDF. The orchestrator prepares the Markdown memory
-automatically and returns the useful page-grounded analysis without exposing the
-memory filename or asking the user to request an `.md` file.
+The most important pattern is that PDF memory generation is treated as an internal preparation step: the user asks for understanding, review, or analysis, and the system prepares the memory automatically when needed.
 
-For later questions, `local_files_search_pdf_memory` searches those compact
-memories first and returns likely source PDF paths. The orchestrator then passes
-those paths to `local_files_search_pdfs`, which retrieves the actual supporting
-pages. The memory is therefore a routing index; final factual answers remain
-grounded in the original PDF excerpts.
+### PDF processing
+The PDF specialists handle direct document creation, tailored rendering, and script-driven PDF edits. They are designed to keep PDF-specific work in the PDF block instead of leaking library concerns into the orchestrator.
 
-`PDF_SEARCH_MAX_PAGES` is a completeness boundary. A PDF above that limit is
-rejected rather than silently summarized only in part.
+### Grist
+The Grist block integrates CSV import and workspace discovery, enabling backend agents to send structured tabular data into Grist without exposing all of the REST detail to the orchestrator.
 
-`local_files_summarize_pdfs` performs the same operation for either an explicit
-list of PDFs or every PDF in a selected folder. It creates one memory per source,
-skips unchanged memories by default, isolates per-file failures, and reports
-created, updated, skipped, and failed counts. It never merges unrelated PDFs
-into one summary. `PDF_MEMORY_MAX_BATCH_FILES` bounds one request and
-`PDF_MEMORY_BATCH_CONCURRENCY` controls parallel document processing.
+### Data analysis
+The data-analysis block accepts CSV/ODS/Grist artifacts and produces a structured analysis result that can later be rendered into a PDF report.
 
-`local_files_analyze_folder` handles a natural request to analyze a complete client
-or project folder without turning it into an audit. In one orchestration action it
-prepares one reusable memory per PDF, reads supported CSV/text documents, and returns
-a separate concise summary for every document. A separate checklist PDF can be
-included as additional context without comparing it to the client. This prevents a
-large corpus from exhausting the coordinator's step budget one file at a time.
-
-`local_files_compare_pdfs` compares exactly two PDFs. It creates or refreshes each
-document's memory when needed, uses those memories to plan meaningful comparison
-dimensions, and then retrieves the supporting pages from both original PDFs. The
-result separates agreements, differences, contradictions, and unique coverage, with
-citations such as `[contract-a.pdf, p. 4]`. Memories guide retrieval but are never
-treated as final evidence.
-
-`local_files_audit_pdf` is asymmetric: one PDF is the audit reference and the other
-is the client evidence. It privately prepares both documents, extracts the complete
-checklist from the reference, retrieves supporting original pages from both sides,
-and assigns `COMPLIANT`, `NON-COMPLIANT`, or `INSUFFICIENT EVIDENCE` to every
-criterion with corrective actions and page citations. Missing evidence is never
-silently treated as compliance or as a proven failure.
-
-`local_files_audit_folder` is the corpus equivalent for a client represented by
-several documents. It discovers every PDF, CSV, and supported text file below the
-selected client folder and automatically creates or refreshes one reusable memory
-per client PDF. Those memories accelerate later routing and follow-up questions, but
-they are never accepted as audit proof: the audit still retrieves page- and line-cited
-evidence from the original PDFs and CSV/text files. It extracts the checklist once
-and evaluates criteria in bounded batches. The service renders the final report
-programmatically, so a malformed model response cannot silently omit a criterion.
-File, page, depth, and text limits are reported as audit limitations instead of
-presenting a partial run as complete. Sibling folders are not inspected, which keeps
-explicitly excluded material outside the audit.
-
-Audit criteria are extracted from the original reference PDF pages rather than the
-condensed memory, with no silent 20-criterion cutoff. The rendered result includes a
-complete matrix with criterion, requirement, verdict, reference evidence, client
-evidence, reasoning, and corrective action columns, followed by detailed findings.
-It also includes a source register with a stable ID for the reference and every
-assessed evidence file, the exact path relative to `LOCAL_FILES_ROOT`, the document
-type, and instructions for reopening the cited page or line range. The structured
-result carries typed local-file artifacts for the same sources, allowing a follow-up
-question to retrieve the original evidence directly instead of treating the report
-as the source of truth.
-
-The complete rendered audit and its structured findings are exchanged as a bounded
-in-memory `audit_report` artifact. The coordinator receives only counts, limitations,
-paths, and the artifact reference; it does not receive a second copy of every matrix
-row. `pdf_render_audit` consumes that artifact directly to create the complete local
-PDF. This prevents large audits from exhausting the model context between the audit
-and publishing steps.
-
-When `csv_relative_path` is supplied, the folder audit also writes the full matrix
-as UTF-8 CSV with one row per criterion and the columns `criterion`, `requirement`,
-`verdict`, `reference evidence`, `client evidence`, `reasoning`, and
-`corrective action`. The returned `text/csv` artifact can be passed directly to the
-Grist block without asking the model to reconstruct rows from report prose. For a
-combined publishing request, the coordinator preserves the local paths and includes
-the Drive permalink and Grist document URL returned by their respective blocks.
-
-For requests covering several folders, `local_files_summarize_pdfs` accepts a
-`directories` list and prepares all discovered PDFs in one bounded operation. This
-keeps natural multi-folder requests within a small number of orchestration actions.
-
-## Reading images
-
-`drive_read_image` and `local_files_read_image` load PNG, JPEG, GIF, or WebP
-bytes into backend memory and send them directly to an Albert
-`image-text-to-text` model. The text-generation model remains the coordinator;
-it does not inspect the pixels itself. Set `ALBERT_VISION_MODEL` to a canonical
-vision model ID, or leave it empty to select the first compatible model from
-Albert's live catalogue. Only the textual analysis is returned to the
-orchestrator; raw image data is not copied into tool results.
-
-## Creating local files
-
-`local_files_create_file` creates a new UTF-8 text file with a requested
-extension inside an existing directory under `LOCAL_FILES_ROOT`. It is exposed
-only for explicit file-creation requests. Existing files are never overwritten,
-directories are not created implicitly, and content size is bounded by
-`LOCAL_FILES_MAX_CREATE_BYTES`.
-
-`local_files_rename_file` renames one file within its current local directory.
-It preserves the existing extension when the requested new name omits one,
-never overwrites another file, and returns an updated local file artifact.
-
-`local_files_read_text` reads bounded CSV, TSV, TXT, Markdown, JSON, XML, YAML,
-and log files. It handles UTF-8 BOMs, UTF-16 BOMs, and Windows-1252 text, making
-content-aware operations such as “inspect this unknown file and rename it”
-possible entirely inside the local-files block.
-
-## Creating Drive files
-
-`drive_create_file` uploads a new UTF-8 text file either to the top of My Files
-or to a folder selected by UUID. It follows Drive's create, signed upload, and
-upload-complete sequence. Configure `DRIVE_CSRF_TOKEN` from the same authenticated
-browser session as `DRIVE_SESSION_ID`; `DRIVE_MAX_CREATE_BYTES` bounds content size.
-The storage ACL is read from Drive automatically, unless `DRIVE_UPLOAD_ACL` overrides it.
-The specialist creates text content with extensions such as `.txt`, `.md`, `.csv`,
-or `.json`; changing an extension does not generate a binary PDF or DOCX document.
-
-`drive_create_files` creates several text files in one bounded batch, so a request
-for many files does not consume one orchestration round per file. The entire batch
-is validated before the first upload, and the result reports each success and
-failure. `DRIVE_MAX_BATCH_FILES` controls the maximum number of files per batch.
-
-`drive_upload_file` handles existing local files whose exact bytes must be
-preserved, including PDFs, images, archives, office documents, and arbitrary
-binary formats. Its source path is restricted to `LOCAL_FILES_ROOT`, it can
-target a Drive folder UUID, and uploads are bounded by `DRIVE_MAX_UPLOAD_BYTES`.
-
-`drive_read_text` reads bounded CSV and other text-based Drive files using the
-same BOM-aware encodings as local files. `drive_rename_file` updates a file's
-Drive title without downloading or re-uploading its bytes; it preserves the
-existing file type. Together they support “inspect this unknown Drive file and
-rename it descriptively” in one request.
-
-## Analyzing tabular data
-
-`data_analyze_table` accepts local or Drive `.csv` and `.ods` file artifacts,
-as well as Grist document artifacts. It calculates data-quality indicators,
-descriptive statistics, distributions, outliers, correlations, period changes,
-and date-based trends. It returns a bounded in-memory `data_analysis` artifact;
-it does not create files. `pdf_render_analysis` consumes that artifact and creates
-the comprehensive PDF report with charts, an executive summary, methodology, and
-limitations under `LOCAL_FILES_ROOT`. The resulting PDF artifact can then be
-passed directly to `drive_upload_file`.
-
-Analysis is bounded by `DATA_ANALYSIS_MAX_SOURCE_BYTES` and
-`DATA_ANALYSIS_MAX_ROWS`; rendered reports are bounded by `PDF_MAX_REPORT_BYTES`.
-The first usable Grist table or first ODS sheet is selected unless a Grist table
-ID is supplied.
-
-## Creating and editing PDFs
-
-`pdf_create` writes a simple PDF (optional title plus plain-text body) below
-`LOCAL_FILES_ROOT`, using the same non-overwriting, no-implicit-directories
-rules as `local_files_create_file`.
-
-`pdf_render_analysis` is the report boundary for the analyst workflow. It reads
-the typed in-memory result from `data_analyze_table` and owns all PDF layout and
-file creation. This keeps the data-analysis block independent from PDF libraries.
-
-`pdf_apply_template` compiles an existing local `.typ` (Typst) file into a
-PDF. Layout - headers, footers, page numbers, styling - is authored directly
-in the template using Typst's own markup, so the tool itself takes nothing
-beyond the source path and destination.
-
-`pdf_run_script` covers everything the two structured tools cannot express -
-merging, splitting, rotating, watermarking, form filling, and similar edits.
-It runs a short Python script the same way `run_python` does, except its
-working directory is `LOCAL_FILES_ROOT` and the backend's own environment
-already has `pypdf` (editing existing PDFs) and `fpdf` (fpdf2, building PDFs
-from scratch) installed, so the model does not need to install anything.
-`run_python`/`run_python_file` themselves stay PDF-library-free and point the
-model at the pdf block's tools instead, so PDF work always ends up shaped by
-those tools rather than one-off scripts. As with `run_python`, the script only
-has whatever the local filesystem gives it; it does not see the conversation.
-
-`PDF_MAX_CREATE_CHARACTERS` bounds `pdf_create`'s body text and
-`PDF_MAX_TEMPLATE_SOURCE_BYTES` bounds the Typst source `pdf_apply_template`
-will compile.
-
-## Importing CSV files into Grist
-
-`grist_list_workspaces` discovers available destination workspaces and their
-documents. `grist_import_csv` creates a new Grist document from UTF-8 CSV text,
-a local CSV below `LOCAL_FILES_ROOT`, or a CSV downloaded from La Suite Drive.
-Set `GRIST_API_KEY`, `GRIST_ORG_ID`, and optionally `GRIST_WORKSPACE_ID` in
-`.env`. Imports are bounded by `GRIST_MAX_IMPORT_BYTES` and are performed only
-after an explicit user request; existing Grist documents are not replaced.
+### Code execution
+The code execution block is a lower-level specialist family used for script-based tasks and bounded runtime actions. It is intentionally narrow and should be treated as a specialized capability rather than as a general-purpose unrestricted executor.
 
 ## Routing flow
 
-1. `OrchestratorAgent` sends the conversation and registered tool definitions
-   to Albert.
-2. Albert selects the specialist whose description and parameter schema match
-   the user's intent.
-3. `AgentRegistry` parses the arguments and invokes that specialist.
-4. The structured result is returned to Albert, which may delegate another step
-   or produce the final response.
+1. The user sends a conversation to the backend.
+2. The orchestrator loads the registered capability blocks.
+3. The model receives compact block manifests and chooses the relevant tools.
+4. Tool arguments are validated by the selected agent.
+5. Execution returns structured results and artifacts.
+6. The model may decide to call more tools or provide the final answer.
 
-## Adding a built-in block
+The key design principle is that structured artifacts are reused across steps. Example: a file reference returned by `drive_list_items` is fed into `drive_read_pdf`, and a report artifact produced by analysis can be rendered into a PDF later without reconstructing the original data in the LLM.
 
-Create a package below `agent/specialists`, implement one or more
-`SpecialistAgent` classes, then expose a `block.py`. Discovery is automatic;
-there is no central list and `orchestrator.py` must not be modified.
+## Safety and permissions
 
-```python
-from typing import Any
+Each block declares permissions and config requirements. These are not cosmetic: they define what the model is allowed to do and what environment values must be present before the block can be used.
 
-from agent.base import DelegationContext, SpecialistAgent
+Examples include:
 
+- `local.read` / `local.write`
+- `drive.read` / `drive.write`
+- `model.vision`
+- `model.generate`
 
-class DocsSearchAgent(SpecialistAgent):
-    name = "docs_search"
-    description = "Search documents available in the configured Docs service."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-        },
-        "required": ["query"],
-        "additionalProperties": False,
-    }
+This is how the orchestrator remains constrained even when model calls are dynamic.
 
-    def execute(
-        self, arguments: dict[str, Any], context: DelegationContext
-    ) -> dict[str, Any]:
-        return {"results": []}
-```
+## Extending the system
 
-```python
-# agent/specialists/docs/block.py
-from agent.blocks import AgentBlock
-from agent.specialists.docs.search import DocsSearchAgent
+To add a built-in block:
 
+1. Create a new specialist package under `agent/specialists/`.
+2. Implement one or more `SpecialistAgent` subclasses.
+3. Expose a `create_block()` factory that returns an `AgentBlock`.
+4. Register the block through the Python package discovery process.
 
-def create_block() -> AgentBlock:
-    return AgentBlock(
-        name="docs",
-        description="Search and manage collaborative documents.",
-        agents=(DocsSearchAgent(),),
-    )
-```
+The block API is intentionally simple; `orchestrator.py` stays generic and does not require per-integration edits.
 
-At the next backend start, `agent.blocks.discover_builtin_blocks()` finds the
-package and advertises its agents to the brain.
+## Related docs
 
-## Publishing an external block
-
-An independently maintained Python package can expose the same zero-argument
-factory through the `lasuite_automations.blocks` entry-point group:
-
-```toml
-[project.entry-points."lasuite_automations.blocks"]
-docs = "my_lasuite_docs.block:create_block"
-```
-
-Installing that package into the backend environment is enough. The core
-repository, runtime, and orchestrator require no changes. Block names and agent
-names must be globally unique; startup fails clearly when a collision exists.
-
-Each block must enforce its own authentication, path boundaries, permissions,
-and mutation safeguards. It must not trust model-provided identifiers blindly.
-Return structured results and errors rather than a prewritten assistant response
-so the brain can combine several blocks in one request.
+- [backend/README.md](../../README.md)
+- [backend/BLOCKS.md](../../BLOCKS.md)
+- [backend/src/agent/specialists/README.md](specialists/README.md)
+- [backend/src/providers/README.md](../providers/README.md)
+- [backend/src/repositories/README.md](../repositories/README.md)
+- [backend/src/services/README.md](../services/README.md)
