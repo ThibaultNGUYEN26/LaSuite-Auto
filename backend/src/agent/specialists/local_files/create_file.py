@@ -13,7 +13,9 @@ class LocalFilesCreateFileAgent(SpecialistAgent):
     description = (
         "Create a new UTF-8 text file with a specific extension inside the configured "
         "local workspace. Use only when the user explicitly asks to create a file. "
-        "This never overwrites an existing file and does not create directories."
+        "The directory may be the relative path returned by the folder-creation "
+        "capability. This never overwrites an existing file and does not create "
+        "directories itself."
     )
     parameters: dict[str, Any] = {
         "type": "object",

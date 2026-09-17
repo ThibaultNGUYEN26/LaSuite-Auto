@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from agent.base import DelegationContext
 from agent.blocks import BlockRegistry
@@ -31,6 +32,15 @@ SYSTEM_PROMPT = (
     "capability before answering. Treat the extracted document text as the source "
     "of truth: answer only from that text, never fill gaps with general model "
     "knowledge, and clearly say when the document does not contain the answer. "
+    "Capabilities whose manifest marks them as internal are preparation steps. Call "
+    "them automatically when they are needed for the user's requested outcome; the "
+    "user must not have to request their cache, index, memory, or intermediate file. "
+    "Do not mention an internal artifact, its format, or its path unless the user "
+    "explicitly asks for implementation details. Report the useful analysis or final "
+    "outcome instead. When the requested reference, subject, source, and destination "
+    "can be determined from the current request, conversation, or file listing, "
+    "proceed without asking the user to confirm them. Respect folders named by the "
+    "user and do not silently substitute a similarly named file from elsewhere. "
     "When the user asks a factual question without knowing which PDF contains the "
     "answer, search available PDF memories first to identify likely source documents, "
     "then search those original PDFs for the passages that support the final answer. "
@@ -50,6 +60,39 @@ SYSTEM_PROMPT = (
     "When the user asks to compare exactly two local PDFs, use the dedicated PDF "
     "comparison capability. It prepares missing memories and retrieves evidence from "
     "both originals, so do not attempt to compare memory summaries by yourself. "
+    "When auditing a subject represented by a folder or multiple documents, use one "
+    "corpus-level audit capability that covers every in-scope evidence file. Never "
+    "substitute the first file for the corpus, and do not ask permission to continue "
+    "work the user already requested. "
+    "A general request to analyze, understand, review, or summarize documents is not "
+    "an audit. Use a descriptive corpus-analysis capability and preserve separate "
+    "document summaries. Only run an audit or assign compliance verdicts when the user "
+    "explicitly asks to audit, assess compliance, or compare evidence against stated "
+    "requirements. When a README or manifest identifies the in-scope collection, obey "
+    "that scope and do not substitute an unrelated similarly named folder. For a "
+    "multi-document request, use one bounded batch/corpus capability rather than one "
+    "orchestration action per document. "
+    "Keep final answers clean: begin directly with the result, never expose private "
+    "planning or self-talk, never say what you are about to present, and do not repeat "
+    "the same introduction or completion claim. Preserve source citations returned by "
+    "document capabilities. When an audit capability returns a complete criterion "
+    "matrix, present the entire matrix with every criterion and column; never replace "
+    "it with a shorter selection or high-level summary. Preserve the audit source "
+    "register, stable source IDs, exact paths, and retrieval guidance in any saved or "
+    "published report. When the user later asks about an audit finding, reopen the "
+    "cited source artifact at its cited page or line range instead of relying on the "
+    "report or model memory alone. When an audit request also asks for a matrix CSV "
+    "or tabular destination, ask the audit capability to export its structured "
+    "findings as CSV and pass the returned CSV artifact directly to a compatible "
+    "destination capability; never reconstruct the audit rows from prose. If an "
+    "audit capability returns a structured audit-report artifact and the user asks "
+    "for a PDF, pass that artifact directly to a compatible PDF renderer. Never copy "
+    "the complete audit body into another capability call or reproduce it in tool "
+    "arguments. If an "
+    "external write returns a URL or "
+    "permalink, include it as a clickable Markdown link in the final answer, together "
+    "with the local output paths. If no URL is returned, provide the resource ID and "
+    "say that a direct link was unavailable rather than inventing one. "
     "PDF text uses [Page N] markers. Cite supporting PDF pages as [p. N], and do "
     "not invent a page number. If extraction is truncated, disclose that the answer "
     "only covers the pages that were available. "
@@ -69,6 +112,97 @@ STEP_LIMIT_PROMPT = (
     "ask one focused question that would let the work continue. Do not mention tools, "
     "steps, internal limits, the backend, or implementation errors."
 )
+
+
+def _append_resource_links(
+    content: str, execution_context: list[dict[str, Any]]
+) -> str:
+    """Append verified resource URLs returned by successful capabilities."""
+    links: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def visit(value: Any, *, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                visit(child_value, key=child_key)
+            return
+        if isinstance(value, list):
+            for child in value:
+                visit(child, key=key)
+            return
+        if (
+            key not in {"url_permalink", "document_url", "web_url", "url"}
+            or not isinstance(value, str)
+            or value in seen
+            or value in content
+        ):
+            return
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return
+        seen.add(value)
+        if key == "url_permalink":
+            label = "Open the uploaded report"
+        elif key == "document_url":
+            label = "Open the imported audit matrix"
+        else:
+            label = "Open the created resource"
+        links.append((label, value))
+
+    for entry in execution_context:
+        visit(entry.get("result"))
+    if not links:
+        return content
+    rendered = "\n".join(f"- [{label}]({url})" for label, url in links)
+    return f"{content.rstrip()}\n\nCreated resources:\n\n{rendered}"
+
+
+def _partial_result_fallback(execution_context: list[dict[str, Any]]) -> str:
+    """Describe concrete completed outputs when final synthesis is empty."""
+    completed: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        if value not in seen:
+            seen.add(value)
+            completed.append(value)
+
+    for entry in execution_context:
+        result = entry.get("result")
+        if not isinstance(result, dict):
+            continue
+        if result.get("status") == "audited":
+            subject = result.get("client_directory") or result.get("client_document")
+            criteria_count = result.get("criteria_count")
+            source_count = result.get("source_count")
+            detail = f"Audit produced for {subject or 'the selected evidence'}"
+            if isinstance(criteria_count, int):
+                detail += f" with {criteria_count} criteria"
+            if isinstance(source_count, int):
+                detail += f" across {source_count} evidence files"
+            if result.get("complete") is False:
+                detail += " (with reported limitations)"
+            add(detail + ".")
+        relative_path = result.get("relative_path")
+        if isinstance(relative_path, str):
+            add(f"Created `{relative_path}`.")
+        audit_csv = result.get("audit_csv")
+        if isinstance(audit_csv, dict) and isinstance(
+            audit_csv.get("relative_path"), str
+        ):
+            add(f"Created `{audit_csv['relative_path']}`.")
+
+    if not completed:
+        return (
+            "I could only complete part of that request, but no reusable output was "
+            "confirmed. Please retry the request."
+        )
+    return (
+        "I completed these parts:\n\n"
+        + "\n".join(f"- {item}" for item in completed)
+        + "\n\nSome requested publishing actions remain unfinished. You can ask me to "
+        "continue them from these outputs."
+    )
 
 
 class ChatCompletionClient(Protocol):
@@ -160,6 +294,7 @@ class OrchestratorAgent:
             if not tool_calls:
                 if not isinstance(content, str) or not content.strip():
                     raise AgentError("Albert returned an empty final answer")
+                content = _append_resource_links(content, execution_context)
                 yield AgentEvent("final", {"content": content})
                 async for event in self._suggest_workflow(
                     conversation, content, used_specialist
@@ -249,10 +384,10 @@ class OrchestratorAgent:
                     "token", {"step": synthesis_step, "delta": chunk["delta"]}
                 )
 
-        content = "".join(content_parts).strip() or (
-            "I could only complete part of that request. Which part would you like "
-            "me to focus on next?"
+        content = "".join(content_parts).strip() or _partial_result_fallback(
+            execution_context
         )
+        content = _append_resource_links(content, execution_context)
         yield AgentEvent(
             "step_complete",
             {"step": synthesis_step, "content": content, "tool_calls": []},

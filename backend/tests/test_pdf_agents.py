@@ -12,6 +12,7 @@ from agent.specialists.pdf import (
     PdfApplyTemplateAgent,
     PdfCreateAgent,
     PdfRenderAnalysisAgent,
+    PdfRenderAuditAgent,
     PdfRunScriptAgent,
 )
 from services.pdf import read_pdf_bytes
@@ -224,6 +225,44 @@ class PdfRenderAnalysisAgentTests(unittest.TestCase):
                     },
                     DelegationContext(conversation=()),
                 )
+
+
+class PdfRenderAuditAgentTests(unittest.TestCase):
+    def test_renders_complete_audit_from_memory_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = MemoryArtifactStore()
+            artifact = store.put(
+                {
+                    "audit": (
+                        "# Complete audit\n\n## Source register\n\n"
+                        "REF: checklist.pdf\n\n## Complete audit matrix\n\n"
+                        "Criterion 1: COMPLIANT [checklist.pdf, p. 1]"
+                    )
+                },
+                kind="audit_report",
+                media_type="application/vnd.lasuite.audit+json",
+                name="Complete audit",
+            )
+            agent = PdfRenderAuditAgent(root, artifact_store=store)
+
+            result = agent.execute(
+                {
+                    "artifact": artifact.tool_value(),
+                    "directory": ".",
+                    "file_name": "complete-audit",
+                    "title": "Complete audit report",
+                },
+                DelegationContext(conversation=()),
+            )
+
+            target = root / "complete-audit.pdf"
+            extracted = "".join(
+                page.extract_text() or "" for page in PdfReader(target).pages
+            )
+            self.assertEqual(result["status"], "created")
+            self.assertIn("Complete audit matrix", extracted)
+            self.assertIn("checklist.pdf, p. 1", extracted)
 
 
 class PdfRunScriptAgentTests(unittest.TestCase):

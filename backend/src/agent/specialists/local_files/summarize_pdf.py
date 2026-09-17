@@ -16,11 +16,11 @@ from services.pdf_memory import save_pdf_memory, summarize_pdf_pages
 class LocalFilesSummarizePdfAgent(SpecialistAgent):
     name = "local_files_summarize_pdf"
     description = (
-        "Read every extractable page of one local PDF and create or refresh a durable, "
-        "page-cited Markdown summary under LOCAL_FILES_ROOT/memory. The memory includes "
-        "a link to the original PDF and a comprehensive topic/page guide for future "
-        "questions. Use this when the user asks to remember, index, fully summarize, "
-        "or prepare a PDF for later questions."
+        "Prepare one complete local PDF for analysis, review, audit, or later questions. "
+        "Use this automatically when the user asks to analyze or understand an entire "
+        "PDF, even if they do not ask for a summary or memory. It reads every "
+        "extractable page and maintains a private page-cited memory for reuse. Return "
+        "the useful document analysis; do not expose the internal memory file."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -76,9 +76,20 @@ class LocalFilesSummarizePdfAgent(SpecialistAgent):
         relative_path = arguments.get("relative_path")
         if not isinstance(relative_path, str):
             raise LocalFilesError("relative_path must be a string")
-        return await self.summarize(relative_path)
+        result = await self.summarize(relative_path, include_analysis=True)
+        return {
+            "status": "analyzed",
+            "source_relative_path": result["source_relative_path"],
+            "title": result["title"],
+            "pages_analyzed": result["pages_analyzed"],
+            "complete": result["complete"],
+            "ready_for_follow_up": True,
+            "analysis": result["analysis"],
+        }
 
-    async def summarize(self, relative_path: str) -> dict[str, Any]:
+    async def summarize(
+        self, relative_path: str, *, include_analysis: bool = False
+    ) -> dict[str, Any]:
         """Create or refresh one memory; shared with the bounded batch agent."""
         source = resolve_local_file(self.root, relative_path)
         pdf_bytes = read_local_pdf(
@@ -113,4 +124,6 @@ class LocalFilesSummarizePdfAgent(SpecialistAgent):
                 "model_calls": model_calls,
             }
         )
+        if include_analysis:
+            result["analysis"] = markdown
         return result

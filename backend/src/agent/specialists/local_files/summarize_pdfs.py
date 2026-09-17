@@ -16,10 +16,11 @@ from services.pdf_memory import find_pdf_memory
 class LocalFilesSummarizePdfsAgent(SpecialistAgent):
     name = "local_files_summarize_pdfs"
     description = (
-        "Create or refresh one reusable Markdown memory per PDF for a bounded local "
-        "folder or an explicit list of local PDF paths. Each document is analyzed "
-        "independently and linked to its original. Up-to-date memories are skipped "
-        "unless refresh is true, and one failure does not stop the remaining files."
+        "Privately prepare every PDF from one or several bounded local folders, or "
+        "from an explicit path list, in one operation. Use automatically when the "
+        "user asks to analyze several folders or documents. Each document is analyzed "
+        "independently. Up-to-date memories are skipped unless refresh is true, and "
+        "one failure does not stop the remaining files."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -37,6 +38,17 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
                 "description": (
                     "Folder relative to LOCAL_FILES_ROOT. Use this instead of "
                     "relative_paths to discover PDFs automatically."
+                ),
+            },
+            "directories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 10,
+                "uniqueItems": True,
+                "description": (
+                    "Several folders relative to LOCAL_FILES_ROOT. Use this to "
+                    "prepare PDFs from multiple folders in one operation."
                 ),
             },
             "recursive": {"type": "boolean", "description": "Defaults to true."},
@@ -57,6 +69,7 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
         "oneOf": [
             {"required": ["relative_paths"]},
             {"required": ["directory"]},
+            {"required": ["directories"]},
         ],
         "additionalProperties": False,
     }
@@ -81,8 +94,11 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
     def _paths(self, arguments: dict[str, Any]) -> tuple[list[str], bool, str | None]:
         relative_paths = arguments.get("relative_paths")
         directory = arguments.get("directory")
-        if relative_paths is not None and directory is not None:
-            raise LocalFilesError("Provide relative_paths or directory, not both")
+        directories = arguments.get("directories")
+        if sum(value is not None for value in (relative_paths, directory, directories)) > 1:
+            raise LocalFilesError(
+                "Provide relative_paths, directory, or directories, not several"
+            )
         if relative_paths is not None:
             if (
                 not isinstance(relative_paths, list)
@@ -103,27 +119,50 @@ class LocalFilesSummarizePdfsAgent(SpecialistAgent):
                 else None
             )
 
-        if not isinstance(directory, str) or not directory.strip():
-            raise LocalFilesError("Provide relative_paths or a directory")
+        if directories is not None:
+            if (
+                not isinstance(directories, list)
+                or not directories
+                or len(directories) > 10
+                or not all(
+                    isinstance(value, str) and value.strip()
+                    for value in directories
+                )
+            ):
+                raise LocalFilesError(
+                    "directories must be an array of one to ten folder paths"
+                )
+            selected_directories = list(dict.fromkeys(directories))
+        elif isinstance(directory, str) and directory.strip():
+            selected_directories = [directory]
+        else:
+            raise LocalFilesError(
+                "Provide relative_paths, directory, or directories"
+            )
         recursive = arguments.get("recursive", True)
         if not isinstance(recursive, bool):
             raise LocalFilesError("recursive must be a boolean")
         max_depth = arguments.get("max_depth", 5)
         if not isinstance(max_depth, int) or isinstance(max_depth, bool):
             raise LocalFilesError("max_depth must be an integer")
-        listing = list_local_items(
-            self.root,
-            directory=directory,
-            limit=500,
-            recursive=recursive,
-            max_depth=max_depth,
-        )
-        discovered = [
-            item["relative_path"]
-            for item in listing["items"]
-            if item.get("type") == "file" and item.get("extension") == ".pdf"
-        ]
-        limited = len(discovered) > self.max_files or not listing["complete"]
+        discovered: list[str] = []
+        listings_complete = True
+        for selected_directory in selected_directories:
+            listing = list_local_items(
+                self.root,
+                directory=selected_directory,
+                limit=500,
+                recursive=recursive,
+                max_depth=max_depth,
+            )
+            listings_complete = listings_complete and listing["complete"]
+            discovered.extend(
+                item["relative_path"]
+                for item in listing["items"]
+                if item.get("type") == "file" and item.get("extension") == ".pdf"
+            )
+        discovered = list(dict.fromkeys(discovered))
+        limited = len(discovered) > self.max_files or not listings_complete
         limitation = None
         if limited:
             limitation = (

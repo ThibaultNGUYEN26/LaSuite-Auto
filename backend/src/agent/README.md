@@ -63,6 +63,14 @@ can first call `drive_list_items`, select the matching PDF UUID, then call
 `drive_read_pdf`. Scanned image-only PDFs return an explicit no-extractable-text
 error.
 
+`drive_download_folder` copies all of My Files or one complete bounded Drive folder
+tree below `LOCAL_FILES_ROOT`, preserving nested folders, filenames, and original bytes.
+It creates a new local folder and never overwrites an existing path. Individual
+files are bounded by `DRIVE_MAX_DOWNLOAD_BYTES`; the batch is bounded by
+`DRIVE_MAX_FOLDER_DOWNLOAD_FILES`, `DRIVE_MAX_FOLDER_DOWNLOAD_BYTES`, and the
+five-level traversal limit. A failure or oversized file is reported without hiding
+the files that downloaded successfully.
+
 ## Reading a local PDF
 
 `local_files_list_items` lists any relative directory below the configured
@@ -73,6 +81,15 @@ or `Desktop` with the `directory` argument.
 memory, and uses the same text extractor as the Drive specialist. Absolute
 paths and paths that escape the configured root are rejected.
 
+## Creating and using local folders
+
+`local_files_create_folder` creates one folder under an existing directory and
+returns a typed folder artifact plus its relative path. The orchestrator can pass
+that path directly to `local_files_create_file`, the PDF creation capabilities, or
+`local_files_list_items`. This supports natural requests such as “Create a Client 1
+folder in Downloads and add audit-notes.txt inside it.” Existing paths are never
+overwritten, and all folder operations remain below `LOCAL_FILES_ROOT`.
+
 ## Durable PDF memories
 
 `local_files_summarize_pdf` reads every extractable page of one local PDF using
@@ -80,6 +97,11 @@ bounded map/reduce model calls. It creates a page-cited Markdown memory under
 `LOCAL_FILES_ROOT/memory/`, gives the file a title derived from its contents,
 and includes a relative link to the original PDF. Re-running it for the same
 source refreshes the managed memory instead of creating duplicates.
+
+This is an internal preparation capability. A user can simply ask to analyze,
+review, understand, or audit a PDF. The orchestrator prepares the Markdown memory
+automatically and returns the useful page-grounded analysis without exposing the
+memory filename or asking the user to request an `.md` file.
 
 For later questions, `local_files_search_pdf_memory` searches those compact
 memories first and returns likely source PDF paths. The orchestrator then passes
@@ -97,12 +119,68 @@ created, updated, skipped, and failed counts. It never merges unrelated PDFs
 into one summary. `PDF_MEMORY_MAX_BATCH_FILES` bounds one request and
 `PDF_MEMORY_BATCH_CONCURRENCY` controls parallel document processing.
 
+`local_files_analyze_folder` handles a natural request to analyze a complete client
+or project folder without turning it into an audit. In one orchestration action it
+prepares one reusable memory per PDF, reads supported CSV/text documents, and returns
+a separate concise summary for every document. A separate checklist PDF can be
+included as additional context without comparing it to the client. This prevents a
+large corpus from exhausting the coordinator's step budget one file at a time.
+
 `local_files_compare_pdfs` compares exactly two PDFs. It creates or refreshes each
 document's memory when needed, uses those memories to plan meaningful comparison
 dimensions, and then retrieves the supporting pages from both original PDFs. The
 result separates agreements, differences, contradictions, and unique coverage, with
 citations such as `[contract-a.pdf, p. 4]`. Memories guide retrieval but are never
 treated as final evidence.
+
+`local_files_audit_pdf` is asymmetric: one PDF is the audit reference and the other
+is the client evidence. It privately prepares both documents, extracts the complete
+checklist from the reference, retrieves supporting original pages from both sides,
+and assigns `COMPLIANT`, `NON-COMPLIANT`, or `INSUFFICIENT EVIDENCE` to every
+criterion with corrective actions and page citations. Missing evidence is never
+silently treated as compliance or as a proven failure.
+
+`local_files_audit_folder` is the corpus equivalent for a client represented by
+several documents. It discovers every PDF, CSV, and supported text file below the
+selected client folder and automatically creates or refreshes one reusable memory
+per client PDF. Those memories accelerate later routing and follow-up questions, but
+they are never accepted as audit proof: the audit still retrieves page- and line-cited
+evidence from the original PDFs and CSV/text files. It extracts the checklist once
+and evaluates criteria in bounded batches. The service renders the final report
+programmatically, so a malformed model response cannot silently omit a criterion.
+File, page, depth, and text limits are reported as audit limitations instead of
+presenting a partial run as complete. Sibling folders are not inspected, which keeps
+explicitly excluded material outside the audit.
+
+Audit criteria are extracted from the original reference PDF pages rather than the
+condensed memory, with no silent 20-criterion cutoff. The rendered result includes a
+complete matrix with criterion, requirement, verdict, reference evidence, client
+evidence, reasoning, and corrective action columns, followed by detailed findings.
+It also includes a source register with a stable ID for the reference and every
+assessed evidence file, the exact path relative to `LOCAL_FILES_ROOT`, the document
+type, and instructions for reopening the cited page or line range. The structured
+result carries typed local-file artifacts for the same sources, allowing a follow-up
+question to retrieve the original evidence directly instead of treating the report
+as the source of truth.
+
+The complete rendered audit and its structured findings are exchanged as a bounded
+in-memory `audit_report` artifact. The coordinator receives only counts, limitations,
+paths, and the artifact reference; it does not receive a second copy of every matrix
+row. `pdf_render_audit` consumes that artifact directly to create the complete local
+PDF. This prevents large audits from exhausting the model context between the audit
+and publishing steps.
+
+When `csv_relative_path` is supplied, the folder audit also writes the full matrix
+as UTF-8 CSV with one row per criterion and the columns `criterion`, `requirement`,
+`verdict`, `reference evidence`, `client evidence`, `reasoning`, and
+`corrective action`. The returned `text/csv` artifact can be passed directly to the
+Grist block without asking the model to reconstruct rows from report prose. For a
+combined publishing request, the coordinator preserves the local paths and includes
+the Drive permalink and Grist document URL returned by their respective blocks.
+
+For requests covering several folders, `local_files_summarize_pdfs` accepts a
+`directories` list and prepares all discovered PDFs in one bounded operation. This
+keeps natural multi-folder requests within a small number of orchestration actions.
 
 ## Reading images
 

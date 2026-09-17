@@ -4,7 +4,7 @@ from urllib.error import HTTPError
 from unittest.mock import Mock, patch
 
 from agent.errors import DriveAPIError
-from services.drive import download_drive_pdf
+from services.drive import download_drive_folder_archive, download_drive_pdf
 
 
 ITEM_ID = "4d57f9aa-f5b6-4581-af99-28c6f935cd2b"
@@ -23,6 +23,24 @@ class FakeDownloadResponse(io.BytesIO):
 
 
 class DriveDownloadTests(unittest.TestCase):
+    @patch("services.drive.urlopen")
+    def test_downloads_native_recursive_folder_archive(self, urlopen):
+        urlopen.return_value = FakeDownloadResponse(
+            b"PK\x03\x04zip-data", {"Content-Length": "12"}
+        )
+
+        result = download_drive_folder_archive(
+            "http://drive:8071", "session-secret", ITEM_ID, max_bytes=100
+        )
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            f"http://drive:8071/api/v1.0/items/{ITEM_ID}/export/",
+        )
+        self.assertEqual(request.get_header("Cookie"), "drive_sessionid=session-secret")
+        self.assertEqual(result, b"PK\x03\x04zip-data")
+
     @patch("services.drive.build_opener")
     def test_downloads_pdf_with_authenticated_drive_request(self, build_opener):
         opener = Mock()

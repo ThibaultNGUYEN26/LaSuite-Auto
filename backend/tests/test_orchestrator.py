@@ -10,7 +10,11 @@ from agent.blocks import (
     WorkflowManifest,
     build_agent_registry,
 )
-from agent.orchestrator import OrchestratorAgent
+from agent.orchestrator import (
+    OrchestratorAgent,
+    _append_resource_links,
+    _partial_result_fallback,
+)
 from agent.registry import AgentRegistry
 from agent.specialists.drive import DriveConfigAgent
 from schemas import ChatMessage
@@ -107,6 +111,65 @@ async def collect_events(agent, conversation):
 
 
 class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
+    def test_partial_fallback_preserves_completed_audit_outputs(self):
+        content = _partial_result_fallback(
+            [
+                {
+                    "capability": "example_audit",
+                    "result": {
+                        "status": "audited",
+                        "client_directory": "Clients/Valdorne",
+                        "criteria_count": 40,
+                        "source_count": 15,
+                        "complete": True,
+                        "audit_csv": {
+                            "relative_path": "Reports/Valdorne_matrix.csv"
+                        },
+                    },
+                }
+            ]
+        )
+
+        self.assertIn("40 criteria", content)
+        self.assertIn("15 evidence files", content)
+        self.assertIn("`Reports/Valdorne_matrix.csv`", content)
+
+    def test_appends_verified_drive_and_grist_links(self):
+        content = _append_resource_links(
+            "The report and matrix were created.",
+            [
+                {
+                    "capability": "drive_upload_file",
+                    "result": {
+                        "url_permalink": "http://drive/explorer/items/report-id"
+                    },
+                },
+                {
+                    "capability": "grist_import_csv",
+                    "result": {
+                        "document_url": "http://grist/o/docs/doc/audit-id",
+                        "artifact": {
+                            "metadata": {
+                                "url": "http://grist/o/docs/doc/audit-id"
+                            }
+                        },
+                    },
+                },
+            ],
+        )
+
+        self.assertIn(
+            "[Open the uploaded report]"
+            "(http://drive/explorer/items/report-id)",
+            content,
+        )
+        self.assertIn(
+            "[Open the imported audit matrix]"
+            "(http://grist/o/docs/doc/audit-id)",
+            content,
+        )
+        self.assertEqual(content.count("http://grist/o/docs/doc/audit-id"), 1)
+
     def test_runtime_registry_advertises_discovered_capabilities(self):
         names = {
             tool["function"]["name"]
@@ -118,6 +181,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "drive_get_config",
                 "drive_create_file",
                 "drive_create_files",
+                "drive_download_folder",
                 "drive_list_items",
                 "drive_read_image",
                 "drive_read_pdf",
@@ -130,6 +194,10 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "grist_list_workspaces",
                 "local_files_list_items",
                 "local_files_create_file",
+                "local_files_create_folder",
+                "local_files_analyze_folder",
+                "local_files_audit_folder",
+                "local_files_audit_pdf",
                 "local_files_compare_pdfs",
                 "local_files_read_image",
                 "local_files_read_pdf",
@@ -143,6 +211,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "pdf_create",
                 "pdf_apply_template",
                 "pdf_render_analysis",
+                "pdf_render_audit",
                 "pdf_run_script",
             },
         )
@@ -166,6 +235,14 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(albert.requests), 1)
         self.assertIn(
             "Treat the extracted document text as the source of truth",
+            albert.requests[0]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "pass the returned CSV artifact directly to a compatible",
+            albert.requests[0]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "include it as a clickable Markdown link",
             albert.requests[0]["messages"][0]["content"],
         )
 

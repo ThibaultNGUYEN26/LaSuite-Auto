@@ -13,6 +13,26 @@ import truststore
 from agent.errors import AlbertAPIError
 
 
+def _chat_completion_payload(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str | dict[str, Any],
+) -> dict[str, Any]:
+    """Build a request accepted by models that reject an empty tools array."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "stream": True,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = tool_choice
+    return payload
+
+
 class AlbertClient:
     def __init__(
         self, api_key: str, *, base_url: str, timeout: float = 60.0
@@ -143,14 +163,12 @@ class AlbertClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": model,
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": tool_choice,
-            "temperature": 0.2,
-            "stream": True,
-        }
+        payload = _chat_completion_payload(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
         tool_call_fragments: dict[int, dict[str, Any]] = {}
         try:

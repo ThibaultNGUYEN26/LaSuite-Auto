@@ -45,6 +45,7 @@ def _get_albert_agent() -> OrchestratorAgent:
     _albert_agent = OrchestratorAgent(
         albert,
         model=model,
+        max_steps=settings.orchestrator_max_steps,
         block_registry=BlockRegistry.discover(
             allowed_permissions=settings.block_allowed_permissions
         ),

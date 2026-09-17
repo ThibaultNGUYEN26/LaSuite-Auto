@@ -11,6 +11,7 @@ from agent.specialists.drive import (
     DriveConfigAgent,
     DriveCreateFileAgent,
     DriveCreateFilesAgent,
+    DriveDownloadFolderAgent,
     DriveListItemsAgent,
     DriveReadImageAgent,
     DriveReadPdfAgent,
@@ -32,15 +33,16 @@ def create_block() -> AgentBlock:
     return AgentBlock(
         name="drive",
         description=(
-            "Discover, search, read, create, upload, and rename files in La Suite "
-            "Drive, including page-level evidence search across many PDFs."
+            "Discover, search, read, create, upload, rename, and download files or "
+            "complete folder trees in La Suite Drive, including page-level evidence "
+            "search across many PDFs."
         ),
         required_config=(
             ConfigRequirement("DRIVE_BASE_URL", required=True),
             ConfigRequirement("DRIVE_SESSION_ID", required=True, secret=True),
             ConfigRequirement("DRIVE_CSRF_TOKEN", secret=True),
         ),
-        permissions=("drive.read", "drive.write", "local.read"),
+        permissions=("drive.read", "drive.write", "local.read", "local.write"),
         capabilities=(
             CapabilityManifest(
                 "drive_get_config",
@@ -68,6 +70,14 @@ def create_block() -> AgentBlock:
                 side_effect="external_read",
                 permissions=("drive.read",),
                 produces=(ArtifactContract("file_reference"),),
+            ),
+            CapabilityManifest(
+                "drive_download_folder",
+                "Download all My Files or a bounded Drive folder tree locally while preserving paths and bytes.",
+                side_effect="local_write",
+                permissions=("drive.read", "local.write"),
+                accepts=(ArtifactContract("folder", ("inode/directory",)),),
+                produces=(ArtifactContract("folder", ("inode/directory",)),),
             ),
             CapabilityManifest(
                 "drive_read_pdf",
@@ -124,6 +134,11 @@ def create_block() -> AgentBlock:
                 ("drive_list_items", "drive_read_pdf"),
             ),
             WorkflowManifest(
+                "drive.download_folder",
+                "Locate a Drive folder and download its complete bounded tree locally.",
+                ("drive_list_items", "drive_download_folder"),
+            ),
+            WorkflowManifest(
                 "drive.answer_from_pdfs",
                 "Search a Drive PDF collection and answer from cited page evidence.",
                 ("drive_search_pdfs",),
@@ -149,6 +164,14 @@ def create_block() -> AgentBlock:
             DriveListItemsAgent(
                 settings.drive_base_url,
                 settings.drive_session_id,
+            ),
+            DriveDownloadFolderAgent(
+                settings.drive_base_url,
+                settings.drive_session_id,
+                settings.local_files_root,
+                max_file_bytes=settings.drive_max_download_bytes,
+                max_files=settings.drive_max_folder_download_files,
+                max_total_bytes=settings.drive_max_folder_download_bytes,
             ),
             DriveReadPdfAgent(
                 settings.drive_base_url,
