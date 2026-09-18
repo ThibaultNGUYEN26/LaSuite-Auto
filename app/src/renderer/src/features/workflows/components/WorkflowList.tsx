@@ -1,4 +1,4 @@
-import { HorizontalSeparator, Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
+import { Icon, IconSize } from '@gouvfr-lasuite/ui-kit'
 import { useEffect, useState } from 'react'
 import { deleteWorkflow, listWorkflows, type Workflow } from '../api/workflows'
 
@@ -36,15 +36,15 @@ function WorkflowList({ refreshKey, onLaunch }: WorkflowListProps): React.JSX.El
   if (workflows.length === 0) return <></>
 
   return (
-    <div className="sidebar-section">
-      <div className="sidebar-divider">
-        <HorizontalSeparator />
+    <div className="sidebar-section sidebar-section--workflows">
+      <div className="sidebar-heading sidebar-heading--with-icon">
+        <Icon name="bolt" size={IconSize.SMALL} />
+        <span>Workflows</span>
       </div>
-      <div className="sidebar-heading">Workflows</div>
       {workflows.map((workflow) => (
         <div
           key={workflow.id}
-          className="sidebar-row"
+          className="sidebar-row sidebar-row--workflow"
           role="button"
           tabIndex={0}
           onClick={() => onLaunch(workflow)}
@@ -52,9 +52,14 @@ function WorkflowList({ refreshKey, onLaunch }: WorkflowListProps): React.JSX.El
             if (e.key === 'Enter') onLaunch(workflow)
           }}
         >
+          <span className="sidebar-row-icon sidebar-row-icon--workflow">
+            <Icon name="play_arrow" size={IconSize.SMALL} />
+          </span>
           <div className="sidebar-row-text">
             <div className="sidebar-row-title">{workflow.name}</div>
-            <div className="sidebar-row-subtitle">{workflow.description}</div>
+            <div className="sidebar-row-subtitle sidebar-row-subtitle--multiline">
+              {workflow.description}
+            </div>
           </div>
           <button
             type="button"

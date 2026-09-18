@@ -114,6 +114,50 @@ class DriveListItemsAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(DriveAPIError, "limit must be an integer"):
             agent.execute({"limit": "many"}, DelegationContext(conversation=()))
 
+    @patch("agent.specialists.drive.list_items.list_drive_items")
+    def test_returns_a_concise_direct_overview_for_a_listing_request(
+        self, list_items
+    ):
+        list_items.return_value = {
+            "count": 3,
+            "top_level_count": 2,
+            "recursive": True,
+            "limitation": None,
+            "items": [
+                {
+                    "title": "Reports",
+                    "type": "folder",
+                    "depth": 0,
+                    "path": ["Reports"],
+                    "url_permalink": "http://drive/items/reports",
+                },
+                {
+                    "title": "Audit.pdf",
+                    "type": "file",
+                    "depth": 1,
+                    "path": ["Reports", "Audit.pdf"],
+                },
+                {
+                    "title": "Notes.txt",
+                    "type": "file",
+                    "depth": 0,
+                    "path": ["Notes.txt"],
+                    "url_permalink": "http://drive/items/notes",
+                },
+            ],
+        }
+        agent = DriveListItemsAgent("http://drive:8071", "session-secret")
+
+        result = agent.execute(
+            {"purpose": "answer_user"}, DelegationContext(conversation=())
+        )
+
+        overview = result["_assistant_response"]
+        self.assertFalse(list_items.call_args.kwargs["recursive"])
+        self.assertIn("**3 items scanned**", overview)
+        self.assertIn("[Reports](http://drive/items/reports) — 1 item found inside", overview)
+        self.assertIn("[Notes.txt](http://drive/items/notes)", overview)
+
 
 if __name__ == "__main__":
     unittest.main()

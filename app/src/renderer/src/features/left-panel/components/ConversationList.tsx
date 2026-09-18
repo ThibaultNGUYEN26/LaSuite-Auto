@@ -72,6 +72,7 @@ function ConversationList({
         <span className="sidebar-row-text sidebar-row-title">New conversation</span>
       </button>
       <HorizontalSeparator />
+      {conversations.length > 0 ? <div className="sidebar-heading">Chats</div> : null}
       {conversations.map((conversation) => (
         <div
           key={conversation.id}

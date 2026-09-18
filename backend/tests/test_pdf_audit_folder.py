@@ -162,6 +162,15 @@ class PdfFolderAuditTests(unittest.IsolatedAsyncioTestCase):
                 },
                 DelegationContext(conversation=()),
             )
+            (root / "AUTO/Reports/Valdorne_Audit_Matrix.csv").unlink()
+            cached_result = await agent.execute(
+                {
+                    "audit_relative_path": reference_path,
+                    "client_directory": client_directory,
+                    "csv_relative_path": "AUTO/Reports/Valdorne_Audit_Matrix.csv",
+                },
+                DelegationContext(conversation=()),
+            )
             csv_text = (
                 root / "AUTO/Reports/Valdorne_Audit_Matrix.csv"
             ).read_text(encoding="utf-8")
@@ -172,6 +181,10 @@ class PdfFolderAuditTests(unittest.IsolatedAsyncioTestCase):
 
         evidence = client.requests[1]["messages"][1]["content"]
         self.assertEqual(result["status"], "audited")
+        self.assertFalse(result["audit_cache_hit"])
+        self.assertTrue(cached_result["audit_cache_hit"])
+        self.assertEqual(cached_result["model_calls"], 0)
+        self.assertEqual(len(client.requests), 2)
         self.assertEqual(result["criteria_count"], 2)
         self.assertEqual(result["source_count"], 3)
         self.assertEqual(result["pdf_count"], 2)

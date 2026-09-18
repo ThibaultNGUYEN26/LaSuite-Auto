@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from time import perf_counter
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -341,6 +342,28 @@ def _has_completed_required_outcome(
     return False
 
 
+def _successful_capabilities(
+    execution_context: list[dict[str, Any]],
+) -> set[str]:
+    """Return capabilities whose result confirms a usable completed action."""
+    completed: set[str] = set()
+    failure_statuses = {"error", "failed", "rejected", "cancelled"}
+    for entry in execution_context:
+        capability = entry.get("capability")
+        result = entry.get("result")
+        if not isinstance(capability, str) or not isinstance(result, dict):
+            continue
+        status = str(result.get("status", "")).strip().casefold()
+        if (
+            result.get("error")
+            or status in failure_statuses
+            or result.get("complete") is False
+        ):
+            continue
+        completed.add(capability)
+    return completed
+
+
 def _append_resource_links(
     content: str, execution_context: list[dict[str, Any]]
 ) -> str:
@@ -348,14 +371,30 @@ def _append_resource_links(
     links: list[tuple[str, str]] = []
     seen: set[str] = set()
 
-    def visit(value: Any, *, key: str | None = None) -> None:
+    def visit(
+        value: Any,
+        *,
+        key: str | None = None,
+        resource_name: str | None = None,
+    ) -> None:
         if isinstance(value, dict):
+            own_name = next(
+                (
+                    value.get(name_key)
+                    for name_key in ("title", "filename", "name", "document_name")
+                    if isinstance(value.get(name_key), str) and value.get(name_key)
+                ),
+                resource_name,
+            )
+            artifact = value.get("artifact")
+            if isinstance(artifact, dict) and isinstance(artifact.get("name"), str):
+                own_name = artifact["name"]
             for child_key, child_value in value.items():
-                visit(child_value, key=child_key)
+                visit(child_value, key=child_key, resource_name=own_name)
             return
         if isinstance(value, list):
             for child in value:
-                visit(child, key=key)
+                visit(child, key=key, resource_name=resource_name)
             return
         if (
             key not in {"url_permalink", "document_url", "web_url", "url"}
@@ -368,20 +407,53 @@ def _append_resource_links(
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return
         seen.add(value)
-        if key == "url_permalink":
-            label = "Open the uploaded report"
-        elif key == "document_url":
-            label = "Open the imported audit matrix"
-        else:
-            label = "Open the created resource"
+        label = f"Open {resource_name}" if resource_name else "Open the result"
         links.append((label, value))
 
     for entry in execution_context:
-        visit(entry.get("result"))
+        result = entry.get("result")
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status", "")).casefold()
+        if status not in {
+            "created",
+            "partially_created",
+            "uploaded",
+            "imported",
+            "published",
+            "updated",
+            "renamed",
+        }:
+            continue
+        visit(result)
     if not links:
         return content
     rendered = "\n".join(f"- [{label}]({url})" for label, url in links)
     return f"{content.rstrip()}\n\nCreated resources:\n\n{rendered}"
+
+
+def _tool_result_for_model(result: Any) -> Any:
+    """Remove redundant listing metadata before returning a result to the model."""
+    if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+        return result
+
+    compact = dict(result)
+    compact.pop("_assistant_response", None)
+    compact_items: list[Any] = []
+    for item in result["items"]:
+        if not isinstance(item, dict):
+            compact_items.append(item)
+            continue
+        compact_items.append(
+            {
+                key: value
+                for key, value in item.items()
+                if key not in {"artifact", "updated_at", "url_permalink"}
+                and value is not None
+            }
+        )
+    compact["items"] = compact_items
+    return compact
 
 
 def _partial_result_fallback(execution_context: list[dict[str, Any]]) -> str:
@@ -465,6 +537,7 @@ class OrchestratorAgent:
     async def run_stream(
         self, conversation: list[ChatMessage]
     ) -> AsyncIterator[AgentEvent]:
+        request_started = perf_counter()
         if self.block_registry is not None and _is_capability_catalog_request(
             conversation
         ):
@@ -475,22 +548,40 @@ class OrchestratorAgent:
                 "step_complete",
                 {"step": 1, "content": content, "tool_calls": []},
             )
-            yield AgentEvent("final", {"content": content})
+            yield AgentEvent(
+                "final",
+                {
+                    "content": content,
+                    "total_duration_ms": round(
+                        (perf_counter() - request_started) * 1000
+                    ),
+                },
+            )
             return
 
         active_registry = self.registry
         planning_prompt = SYSTEM_PROMPT
         selected_blocks: tuple[str, ...] = ()
+        required_capabilities: tuple[str, ...] = ()
         execution_context: list[dict[str, Any]] = []
         requires_corpus_analysis = _requests_corpus_document_analysis(conversation)
         required_outcome_capabilities: tuple[str, ...] = ()
+        pending_selection_timing: dict[str, Any] | None = None
         if self.block_registry is not None:
+            selection_started = perf_counter()
             selected_blocks = await select_blocks(
                 self.albert,
                 model=self.model,
                 conversation=conversation,
                 blocks=self.block_registry,
             )
+            pending_selection_timing = {
+                "selection_phase": "Block selection",
+                "selection_duration_ms": round(
+                    (perf_counter() - selection_started) * 1000
+                ),
+            }
+            required_capabilities = selected_blocks.required_capabilities
             active_registry = self.block_registry.agent_registry(selected_blocks)
             if requires_corpus_analysis:
                 required_outcome_capabilities = (
@@ -509,6 +600,14 @@ class OrchestratorAgent:
                 planning_prompt += _required_outcome_instruction(
                     required_outcome_capabilities
                 )
+            if required_capabilities:
+                planning_prompt += (
+                    "\n\nThe user explicitly requested these terminal outcomes: "
+                    + ", ".join(required_capabilities)
+                    + ". Do not give a final answer until each has returned a "
+                    "successful result. Perform private preparation and artifact "
+                    "handoffs automatically."
+                )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": planning_prompt},
             *(
@@ -520,20 +619,34 @@ class OrchestratorAgent:
         used_specialist = False
 
         for step in range(1, self.max_steps + 1):
-            yield AgentEvent("step_start", {"step": step, "max_steps": self.max_steps})
+            step_data: dict[str, Any] = {
+                "step": step,
+                "max_steps": self.max_steps,
+            }
+            if pending_selection_timing is not None:
+                step_data.update(pending_selection_timing)
+                pending_selection_timing = None
+            yield AgentEvent("step_start", step_data)
 
             content_parts: list[str] = []
             tool_calls: list[dict[str, Any]] = []
+            model_started = perf_counter()
+            first_response_ms: int | None = None
             async for chunk in self.albert.chat_completion_stream(
                 model=self.model,
                 messages=messages,
                 tools=active_registry.tool_definitions(),
             ):
+                if first_response_ms is None:
+                    first_response_ms = round(
+                        (perf_counter() - model_started) * 1000
+                    )
                 if chunk["type"] == "content":
                     content_parts.append(chunk["delta"])
                     yield AgentEvent("token", {"step": step, "delta": chunk["delta"]})
                 elif chunk["type"] == "done":
                     tool_calls = chunk["tool_calls"]
+            model_duration_ms = round((perf_counter() - model_started) * 1000)
 
             content = "".join(content_parts) or None
             assistant_message: dict[str, Any] = {"role": "assistant", "content": content}
@@ -543,10 +656,22 @@ class OrchestratorAgent:
 
             yield AgentEvent(
                 "step_complete",
-                {"step": step, "content": content, "tool_calls": tool_calls},
+                {
+                    "step": step,
+                    "content": content,
+                    "tool_calls": tool_calls,
+                    "model_duration_ms": model_duration_ms,
+                    "first_response_ms": first_response_ms,
+                },
             )
 
             if not tool_calls:
+                completed_capabilities = _successful_capabilities(execution_context)
+                pending_capabilities = tuple(
+                    capability
+                    for capability in required_capabilities
+                    if capability not in completed_capabilities
+                )
                 required_outcome_missing = (
                     required_outcome_capabilities
                     and not _has_completed_required_outcome(
@@ -554,7 +679,15 @@ class OrchestratorAgent:
                         required_outcome_capabilities,
                     )
                 )
-                if required_outcome_missing and step < self.max_steps:
+                if (required_outcome_missing or pending_capabilities) and step < self.max_steps:
+                    pending_instruction = ""
+                    if pending_capabilities:
+                        pending_instruction = (
+                            " The original request still requires these outcomes: "
+                            + ", ".join(pending_capabilities)
+                            + ". Call the necessary capability or capabilities now, "
+                            "reusing artifacts already returned."
+                        )
                     messages.append(
                         {
                             "role": "system",
@@ -564,14 +697,30 @@ class OrchestratorAgent:
                                 "corpus capabilities now: "
                                 + ", ".join(required_outcome_capabilities)
                                 + "."
+                                + pending_instruction
+                                if required_outcome_missing
+                                else (
+                                    "The original request is not complete yet."
+                                    + pending_instruction
+                                )
                             ),
                         }
                     )
                     continue
+                if required_outcome_missing or pending_capabilities:
+                    break
                 if not isinstance(content, str) or not content.strip():
                     raise AgentError("Albert returned an empty final answer")
                 content = _append_resource_links(content, execution_context)
-                yield AgentEvent("final", {"content": content})
+                yield AgentEvent(
+                    "final",
+                    {
+                        "content": content,
+                        "total_duration_ms": round(
+                            (perf_counter() - request_started) * 1000
+                        ),
+                    },
+                )
                 async for event in self._suggest_workflow(
                     conversation, content, used_specialist
                 ):
@@ -579,6 +728,7 @@ class OrchestratorAgent:
                 return
 
             used_specialist = True
+            direct_response: str | None = None
             for tool_call in tool_calls:
                 try:
                     tool_call_id = tool_call["id"]
@@ -597,7 +747,9 @@ class OrchestratorAgent:
                         "arguments": arguments,
                     },
                 )
+                tool_started = perf_counter()
                 result = await active_registry.dispatch_async(name, arguments, context)
+                tool_duration_ms = round((perf_counter() - tool_started) * 1000)
                 yield AgentEvent(
                     "tool_call_result",
                     {
@@ -605,18 +757,88 @@ class OrchestratorAgent:
                         "tool_call_id": tool_call_id,
                         "name": name,
                         "result": result,
+                        "duration_ms": tool_duration_ms,
                     },
                 )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": json.dumps(
+                            _tool_result_for_model(result), ensure_ascii=False
+                        ),
                     }
                 )
                 execution_context.append({"capability": name, "result": result})
+                candidate_response = (
+                    result.get("_assistant_response")
+                    if isinstance(result, dict)
+                    else None
+                )
+                if isinstance(candidate_response, str) and candidate_response.strip():
+                    direct_response = candidate_response
 
-            if self.block_registry is not None and step < self.max_steps:
+            completed_capabilities = _successful_capabilities(execution_context)
+            pending_capabilities = tuple(
+                capability
+                for capability in required_capabilities
+                if capability not in completed_capabilities
+            )
+            required_outcome_missing = (
+                required_outcome_capabilities
+                and not _has_completed_required_outcome(
+                    execution_context,
+                    required_outcome_capabilities,
+                )
+            )
+            if (
+                direct_response is not None
+                and len(tool_calls) == 1
+                and not pending_capabilities
+                and not required_outcome_missing
+            ):
+                content = _append_resource_links(direct_response, execution_context)
+                yield AgentEvent(
+                    "final",
+                    {
+                        "content": content,
+                        "total_duration_ms": round(
+                            (perf_counter() - request_started) * 1000
+                        ),
+                    },
+                )
+                async for event in self._suggest_workflow(
+                    conversation, content, used_specialist
+                ):
+                    yield event
+                return
+
+            result_can_enable_another_block = any(
+                isinstance(entry.get("result"), dict)
+                and any(
+                    key in entry["result"]
+                    for key in ("artifact", "artifacts", "audit_csv", "report_artifact")
+                )
+                for entry in execution_context[-len(tool_calls) :]
+            )
+            available_capabilities = {
+                tool["function"]["name"]
+                for tool in active_registry.tool_definitions()
+            }
+            pending_capability_is_unavailable = any(
+                capability not in available_capabilities
+                for capability in pending_capabilities
+            )
+            if (
+                self.block_registry is not None
+                and step < self.max_steps
+                and result_can_enable_another_block
+                and (
+                    not required_capabilities
+                    or pending_capability_is_unavailable
+                )
+            ):
+                selection_started = perf_counter()
                 next_blocks = await select_blocks(
                     self.albert,
                     model=self.model,
@@ -624,6 +846,20 @@ class OrchestratorAgent:
                     blocks=self.block_registry,
                     execution_context=execution_context,
                     currently_selected=selected_blocks,
+                )
+                pending_selection_timing = {
+                    "selection_phase": "Block reconsideration",
+                    "selection_duration_ms": round(
+                        (perf_counter() - selection_started) * 1000
+                    ),
+                }
+                required_capabilities = tuple(
+                    dict.fromkeys(
+                        (
+                            *required_capabilities,
+                            *next_blocks.required_capabilities,
+                        )
+                    )
                 )
                 expanded_blocks = tuple(
                     dict.fromkeys((*selected_blocks, *next_blocks))
@@ -651,24 +887,41 @@ class OrchestratorAgent:
                         planning_prompt += _required_outcome_instruction(
                             required_outcome_capabilities
                         )
+                    if required_capabilities:
+                        planning_prompt += (
+                            "\n\nThe user explicitly requested these terminal outcomes: "
+                            + ", ".join(required_capabilities)
+                            + ". Do not give a final answer until each has returned a "
+                            "successful result. Perform private preparation and "
+                            "artifact handoffs automatically."
+                        )
                     messages[0]["content"] = planning_prompt
 
         synthesis_step = self.max_steps + 1
-        yield AgentEvent(
-            "step_start", {"step": synthesis_step, "max_steps": self.max_steps}
-        )
+        synthesis_data: dict[str, Any] = {
+            "step": synthesis_step,
+            "max_steps": self.max_steps,
+        }
+        if pending_selection_timing is not None:
+            synthesis_data.update(pending_selection_timing)
+        yield AgentEvent("step_start", synthesis_data)
         messages.append({"role": "system", "content": STEP_LIMIT_PROMPT})
         content_parts = []
+        model_started = perf_counter()
+        first_response_ms = None
         async for chunk in self.albert.chat_completion_stream(
             model=self.model,
             messages=messages,
             tools=[],
         ):
+            if first_response_ms is None:
+                first_response_ms = round((perf_counter() - model_started) * 1000)
             if chunk["type"] == "content":
                 content_parts.append(chunk["delta"])
                 yield AgentEvent(
                     "token", {"step": synthesis_step, "delta": chunk["delta"]}
                 )
+        model_duration_ms = round((perf_counter() - model_started) * 1000)
 
         content = "".join(content_parts).strip() or _partial_result_fallback(
             execution_context
@@ -676,9 +929,23 @@ class OrchestratorAgent:
         content = _append_resource_links(content, execution_context)
         yield AgentEvent(
             "step_complete",
-            {"step": synthesis_step, "content": content, "tool_calls": []},
+            {
+                "step": synthesis_step,
+                "content": content,
+                "tool_calls": [],
+                "model_duration_ms": model_duration_ms,
+                "first_response_ms": first_response_ms,
+            },
         )
-        yield AgentEvent("final", {"content": content})
+        yield AgentEvent(
+            "final",
+            {
+                "content": content,
+                "total_duration_ms": round(
+                    (perf_counter() - request_started) * 1000
+                ),
+            },
+        )
         async for event in self._suggest_workflow(conversation, content, used_specialist):
             yield event
 

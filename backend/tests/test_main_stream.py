@@ -41,7 +41,9 @@ class ChatStreamEndpointTests(unittest.TestCase):
         self.assertIn("Hi there", events[-1][1])
 
     async def _yield_final_event(self, messages):
-        yield AgentEvent("final", {"content": "Answer now"})
+        yield AgentEvent(
+            "final", {"content": "Answer now", "total_duration_ms": 1250}
+        )
 
     def test_persists_the_assistant_response_when_stream_finishes(self):
         with patch("main.run_stream", self._yield_final_event), patch(
@@ -60,6 +62,10 @@ class ChatStreamEndpointTests(unittest.TestCase):
         persisted_messages = save_history.call_args_list[-1].args[2]
         self.assertEqual(persisted_messages[-1].role, "assistant")
         self.assertEqual(persisted_messages[-1].content, "Answer now")
+        self.assertEqual(
+            persisted_messages[-1].trace,
+            [{"type": "total", "durationMs": 1250}],
+        )
 
     async def _raise_agent_error(self, messages):
         raise AgentError("boom")

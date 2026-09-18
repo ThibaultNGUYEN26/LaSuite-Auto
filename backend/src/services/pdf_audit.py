@@ -34,6 +34,8 @@ CRITERIA_INPUT_CHARACTERS = 40_000
 MAX_AUDIT_CRITERIA = 100
 CRITERIA_CACHE_VERSION = 1
 CRITERIA_CACHE_DIRECTORY = Path("memory") / ".audit-criteria"
+AUDIT_RESULT_CACHE_VERSION = 1
+AUDIT_RESULT_CACHE_DIRECTORY = Path("memory") / ".audit-results"
 
 CRITERIA_PROMPT = (
     "Extract every distinct audit criterion from this original reference-document "
@@ -207,6 +209,128 @@ def _save_cached_criteria(
         temporary.replace(path)
     except OSError:
         # A cache failure must never prevent the audit itself from completing.
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _file_digest(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _folder_audit_cache_key(
+    root: Path,
+    *,
+    audit_relative_path: str,
+    evidence_paths: list[str],
+    focus: str | None,
+    model: str,
+    recursive: bool,
+    max_depth: int,
+    max_files: int,
+    max_total_pages: int,
+    max_read_bytes: int,
+    max_text_characters: int,
+) -> str:
+    sources = [audit_relative_path, *evidence_paths]
+    fingerprints = [
+        {
+            "path": relative_path.replace("\\", "/"),
+            "sha256": _file_digest(resolve_local_file(root, relative_path)),
+        }
+        for relative_path in sources
+    ]
+    payload = {
+        "version": AUDIT_RESULT_CACHE_VERSION,
+        "sources": fingerprints,
+        "focus": _normalized_focus(focus),
+        "model": model,
+        "recursive": recursive,
+        "max_depth": max_depth,
+        "max_files": max_files,
+        "max_total_pages": max_total_pages,
+        "max_read_bytes": max_read_bytes,
+        "max_text_characters": max_text_characters,
+        "batch_size": AUDIT_BATCH_SIZE,
+        "batch_max_characters": AUDIT_BATCH_MAX_CHARACTERS,
+        "criteria_prompt_sha256": sha256(
+            CRITERIA_PROMPT.encode("utf-8")
+        ).hexdigest(),
+        "audit_prompt_sha256": sha256(
+            CORPUS_AUDIT_PROMPT.encode("utf-8")
+        ).hexdigest(),
+    }
+    return sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _folder_audit_cache_path(root: Path, cache_key: str) -> Path:
+    resolved_root = resolve_local_directory(root)
+    cache_directory = (resolved_root / AUDIT_RESULT_CACHE_DIRECTORY).resolve()
+    try:
+        cache_directory.relative_to(resolved_root)
+    except ValueError as exc:
+        raise PdfError("The audit-result cache escapes LOCAL_FILES_ROOT") from exc
+    cache_directory.mkdir(parents=True, exist_ok=True)
+    return cache_directory / f"{cache_key}.json"
+
+
+def _load_cached_folder_audit(
+    root: Path, *, cache_key: str
+) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(
+            _folder_audit_cache_path(root, cache_key).read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != AUDIT_RESULT_CACHE_VERSION
+        or payload.get("cache_key") != cache_key
+        or not isinstance(payload.get("result"), dict)
+    ):
+        return None
+    result = payload["result"]
+    required = {
+        "audit",
+        "criteria",
+        "findings",
+        "sources",
+        "criteria_count",
+        "source_count",
+    }
+    return result if required.issubset(result) else None
+
+
+def _save_cached_folder_audit(
+    root: Path, *, cache_key: str, result: dict[str, Any]
+) -> None:
+    temporary: Path | None = None
+    try:
+        path = _folder_audit_cache_path(root, cache_key)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "version": AUDIT_RESULT_CACHE_VERSION,
+                    "cache_key": cache_key,
+                    "result": result,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        temporary.replace(path)
+    except (OSError, TypeError, ValueError):
         try:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -735,6 +859,29 @@ async def audit_folder_against_reference(
         )
         supported = supported[:max_files]
 
+    evidence_paths = sorted(
+        (item["relative_path"] for item in supported),
+        key=str.casefold,
+    )
+    audit_cache_key = _folder_audit_cache_key(
+        root,
+        audit_relative_path=audit_relative_path,
+        evidence_paths=evidence_paths,
+        focus=focus,
+        model=model,
+        recursive=recursive,
+        max_depth=max_depth,
+        max_files=max_files,
+        max_total_pages=max_total_pages,
+        max_read_bytes=max_read_bytes,
+        max_text_characters=max_text_characters,
+    )
+    cached_audit = _load_cached_folder_audit(root, cache_key=audit_cache_key)
+    if cached_audit is not None:
+        cached_audit["audit_cache_hit"] = True
+        cached_audit["model_calls"] = 0
+        return cached_audit
+
     pdf_paths = [item["relative_path"] for item in supported if item["extension"] == ".pdf"]
     text_paths = [item["relative_path"] for item in supported if item["extension"] != ".pdf"]
     reference_source = _pdf_source(
@@ -932,7 +1079,7 @@ async def audit_folder_against_reference(
         source_register=source_register,
         limitations=limitations,
     )
-    return {
+    result = {
         "status": "audited",
         "overall_result": overall,
         "audit_reference": audit_relative_path,
@@ -956,4 +1103,7 @@ async def audit_folder_against_reference(
         "complete": not limitations,
         "limitations": limitations,
         "model_calls": model_calls,
+        "audit_cache_hit": False,
     }
+    _save_cached_folder_audit(root, cache_key=audit_cache_key, result=result)
+    return result

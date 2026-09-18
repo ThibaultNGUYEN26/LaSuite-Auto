@@ -17,6 +17,11 @@ function formatTraceValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
 
+function formatTraceDuration(milliseconds: number): string {
+  if (milliseconds < 1000) return `${milliseconds} ms`
+  return `${(milliseconds / 1000).toFixed(1)} s`
+}
+
 function TraceValue({ value, kind }: { value: unknown; kind?: 'result' }): React.JSX.Element {
   const preRef = useRef<HTMLPreElement>(null)
   const [expanded, setExpanded] = useState(false)
@@ -58,11 +63,34 @@ function ChatTrace({ trace }: { trace: TraceEntry[] }): React.JSX.Element {
       {trace.map((entry, index) =>
         entry.type === 'step' ? (
           <li key={`step-${entry.step}-${index}`} className="chat-trace-entry" data-kind="step">
-            Step {entry.step}
+            <div>Step {entry.step}</div>
+            {entry.selectionDurationMs !== undefined ? (
+              <div>
+                {entry.selectionPhase ?? 'Block selection'}:{' '}
+                {formatTraceDuration(entry.selectionDurationMs)}
+              </div>
+            ) : null}
+            {entry.modelDurationMs !== undefined ? (
+              <div>
+                Model: {formatTraceDuration(entry.modelDurationMs)}
+                {entry.firstResponseMs !== undefined && entry.firstResponseMs !== null
+                  ? ` · first response ${formatTraceDuration(entry.firstResponseMs)}`
+                  : ''}
+              </div>
+            ) : null}
+          </li>
+        ) : entry.type === 'total' ? (
+          <li key={`total-${index}`} className="chat-trace-entry" data-kind="total">
+            Total backend time: {formatTraceDuration(entry.durationMs)}
           </li>
         ) : (
           <li key={entry.toolCallId} className="chat-trace-entry" data-kind="tool-call">
-            <div className="chat-trace-entry__name">{entry.name}</div>
+            <div className="chat-trace-entry__name">
+              {entry.name}
+              {entry.durationMs !== undefined
+                ? ` · ${formatTraceDuration(entry.durationMs)}`
+                : ''}
+            </div>
             <TraceValue value={entry.arguments} />
             {entry.result !== undefined ? <TraceValue value={entry.result} kind="result" /> : null}
           </li>
@@ -128,7 +156,16 @@ const MessageRow = memo(function MessageRow({
                 </span>
               ) : null}
               {message.content ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: ({ node: _node, ...props }) => (
+                      <a {...props} target="_blank" rel="noopener noreferrer" />
+                    )
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
               ) : null}
             </>
           ) : (
