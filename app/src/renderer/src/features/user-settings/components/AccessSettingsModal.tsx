@@ -56,7 +56,7 @@ type AccessSettingsModalProps = {
 }
 
 function AccessSettingsModal({ onClose }: AccessSettingsModalProps): React.JSX.Element {
-  const [accessLevel, setAccessLevel] = useState<AccessLevel>('read_write')
+  const [accessLevel, setAccessLevel] = useState<AccessLevel>('full_access')
   const [localFilesRoot, setLocalFilesRoot] = useState('~/')
 
   const [specializations, setSpecializations] = useState<AgentSpecialization[]>([])

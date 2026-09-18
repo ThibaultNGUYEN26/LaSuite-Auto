@@ -227,7 +227,6 @@ class LocalFilesAuditFolderAgent(SpecialistAgent):
                     "directory": client_directory,
                     "recursive": recursive,
                     "max_depth": max_depth,
-                    "refresh": False,
                 },
                 context,
             )

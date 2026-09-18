@@ -23,12 +23,6 @@ function seedMessages(workflow: Workflow | undefined): ChatMessage[] {
       content: workflow.instructions,
       createdAt: Date.now(),
       hidden: true
-    },
-    {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: workflow.input_question,
-      createdAt: Date.now()
     }
   ]
 }
@@ -61,7 +55,9 @@ function ChatWindow({
       createdAt: savedAt - (initialConversation.messages.length - 1 - index) * 1000
     }))
   })
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(() =>
+    initialConversation ? '' : (workflow?.input_question ?? '')
+  )
   const [isSending, setIsSending] = useState(false)
   const [suggestion, setSuggestion] = useState<WorkflowDraft | null>(null)
   const [draftForSave, setDraftForSave] = useState<WorkflowDraft | null>(null)

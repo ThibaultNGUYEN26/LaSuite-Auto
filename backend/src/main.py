@@ -151,7 +151,35 @@ async def chat_stream(
                 if event.type == "token":
                     partial_content += event.data["delta"]
                 elif event.type == "step_start":
-                    trace.append({"type": "step", "step": event.data["step"]})
+                    trace.append(
+                        {
+                            "type": "step",
+                            "step": event.data["step"],
+                            **(
+                                {
+                                    "selectionPhase": event.data["selection_phase"],
+                                    "selectionDurationMs": event.data[
+                                        "selection_duration_ms"
+                                    ],
+                                }
+                                if "selection_duration_ms" in event.data
+                                else {}
+                            ),
+                        }
+                    )
+                elif event.type == "step_complete":
+                    for entry in reversed(trace):
+                        if (
+                            entry.get("type") == "step"
+                            and entry.get("step") == event.data["step"]
+                        ):
+                            entry["modelDurationMs"] = event.data.get(
+                                "model_duration_ms"
+                            )
+                            entry["firstResponseMs"] = event.data.get(
+                                "first_response_ms"
+                            )
+                            break
                 elif event.type == "tool_call_start":
                     tool_call_positions[event.data["tool_call_id"]] = len(trace)
                     trace.append(
@@ -167,7 +195,14 @@ async def chat_stream(
                     position = tool_call_positions.get(event.data["tool_call_id"])
                     if position is not None:
                         trace[position]["result"] = event.data["result"]
+                        trace[position]["durationMs"] = event.data.get("duration_ms")
                 if chat_id and event.type == "final":
+                    trace.append(
+                        {
+                            "type": "total",
+                            "durationMs": event.data.get("total_duration_ms", 0),
+                        }
+                    )
                     chat_repository.save_history(
                         db,
                         chat_id,

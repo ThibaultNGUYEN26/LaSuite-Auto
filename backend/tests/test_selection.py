@@ -95,6 +95,41 @@ class BlockSelectionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(selected, ("data_analysis",))
 
+    async def test_returns_terminal_capabilities_requested_by_the_user(self):
+        client = FakeSelectionClient(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "id": "selection",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps(
+                                    {
+                                        "blocks": ["local_files"],
+                                        "required_capabilities": ["analyze_data"],
+                                    }
+                                ),
+                            },
+                        }
+                    ]
+                }
+            ]
+        )
+
+        selected = await select_blocks(
+            client,
+            model="model",
+            conversation=[ChatMessage(role="user", content="Analyze my local data")],
+            blocks=self.blocks,
+        )
+
+        self.assertEqual(selected, ("local_files", "data_analysis"))
+        self.assertEqual(selected.required_capabilities, ("analyze_data",))
+        schema = client.requests[0]["tools"][0]["function"]["parameters"]
+        self.assertIn("required_capabilities", schema["properties"])
+
     async def test_retries_as_plain_json_when_tool_selection_is_missing(self):
         client = FakeSelectionClient(
             [

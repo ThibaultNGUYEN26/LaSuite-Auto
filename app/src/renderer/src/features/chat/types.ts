@@ -1,5 +1,12 @@
 export type TraceEntry =
-  | { type: 'step'; step: number }
+  | {
+      type: 'step'
+      step: number
+      selectionPhase?: string
+      selectionDurationMs?: number
+      modelDurationMs?: number
+      firstResponseMs?: number | null
+    }
   | {
       type: 'tool_call'
       toolCallId: string
@@ -7,7 +14,9 @@ export type TraceEntry =
       name: string
       arguments: unknown
       result?: unknown
+      durationMs?: number
     }
+  | { type: 'total'; durationMs: number }
 
 export type ChatMessage = {
   id: string
@@ -27,7 +36,15 @@ export type ChatMessage = {
 }
 
 export type StreamEvent =
-  | { type: 'step_start'; data: { step: number; max_steps: number } }
+  | {
+      type: 'step_start'
+      data: {
+        step: number
+        max_steps: number
+        selection_phase?: string
+        selection_duration_ms?: number
+      }
+    }
   | { type: 'token'; data: { step: number; delta: string } }
   | {
       type: 'tool_call_start'
@@ -35,13 +52,25 @@ export type StreamEvent =
     }
   | {
       type: 'tool_call_result'
-      data: { step: number; tool_call_id: string; name: string; result: unknown }
+      data: {
+        step: number
+        tool_call_id: string
+        name: string
+        result: unknown
+        duration_ms?: number
+      }
     }
   | {
       type: 'step_complete'
-      data: { step: number; content: string | null; tool_calls: unknown[] }
+      data: {
+        step: number
+        content: string | null
+        tool_calls: unknown[]
+        model_duration_ms?: number
+        first_response_ms?: number | null
+      }
     }
-  | { type: 'final'; data: { content: string } }
+  | { type: 'final'; data: { content: string; total_duration_ms?: number } }
   | { type: 'error'; data: { message: string; error_type: string } }
   | { type: 'workflow_suggested'; data: WorkflowDraft }
 

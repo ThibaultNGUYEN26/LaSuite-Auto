@@ -22,8 +22,16 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    void shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  // Keep remote result links (Grist, Drive, etc.) out of the Auto window,
+  // including links that do not explicitly request a new window.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return
+    event.preventDefault()
+    void shell.openExternal(url)
   })
 
   // HMR for renderer base on electron-vite cli.

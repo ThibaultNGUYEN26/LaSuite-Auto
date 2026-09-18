@@ -138,6 +138,23 @@ class FakeCorpusAnalysisAgent(SpecialistAgent):
         }
 
 
+class FakeDirectListAgent(SpecialistAgent):
+    name = "example_list_items"
+    description = "List items and render a concise overview."
+    parameters = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
+    def execute(self, arguments: dict, context: DelegationContext) -> dict:
+        return {
+            "count": 2,
+            "items": [{"title": "Reports"}, {"title": "Notes.txt"}],
+            "_assistant_response": "You have **2 items**: Reports and Notes.txt.",
+        }
+
+
 async def collect_events(agent, conversation):
     events = []
     async for event in agent.run_stream(conversation):
@@ -393,12 +410,16 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "capability": "drive_upload_file",
                     "result": {
+                        "status": "created",
+                        "filename": "Valdorne audit.pdf",
                         "url_permalink": "http://drive/explorer/items/report-id"
                     },
                 },
                 {
                     "capability": "grist_import_csv",
                     "result": {
+                        "status": "imported",
+                        "document_name": "Valdorne audit matrix",
                         "document_url": "http://grist/o/docs/doc/audit-id",
                         "artifact": {
                             "metadata": {
@@ -411,16 +432,36 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn(
-            "[Open the uploaded report]"
+            "[Open Valdorne audit.pdf]"
             "(http://drive/explorer/items/report-id)",
             content,
         )
         self.assertIn(
-            "[Open the imported audit matrix]"
+            "[Open Valdorne audit matrix]"
             "(http://grist/o/docs/doc/audit-id)",
             content,
         )
         self.assertEqual(content.count("http://grist/o/docs/doc/audit-id"), 1)
+
+    def test_does_not_append_links_from_read_only_drive_listings(self):
+        content = _append_resource_links(
+            "Here is your Drive overview.",
+            [
+                {
+                    "capability": "drive_list_items",
+                    "result": {
+                        "items": [
+                            {
+                                "title": "Old report.pdf",
+                                "url_permalink": "http://drive/items/old-report",
+                            }
+                        ]
+                    },
+                }
+            ],
+        )
+
+        self.assertEqual(content, "Here is your Drive overview.")
 
     def test_runtime_registry_advertises_discovered_capabilities(self):
         names = {
@@ -484,7 +525,8 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             [event.type for event in events],
             ["step_start", "token", "step_complete", "final"],
         )
-        self.assertEqual(events[-1].data, {"content": "Hello."})
+        self.assertEqual(events[-1].data["content"], "Hello.")
+        self.assertIsInstance(events[-1].data["total_duration_ms"], int)
         self.assertEqual(len(albert.requests), 1)
         self.assertIn(
             "Treat the extracted document text as the source of truth",
@@ -545,7 +587,16 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 "final",
             ],
         )
-        self.assertEqual(events[-1].data, {"content": "Drive uses French."})
+        self.assertEqual(events[-1].data["content"], "Drive uses French.")
+        tool_result = next(event for event in events if event.type == "tool_call_result")
+        self.assertIsInstance(tool_result.data["duration_ms"], int)
+        completed_steps = [event for event in events if event.type == "step_complete"]
+        self.assertTrue(
+            all(isinstance(event.data["model_duration_ms"], int) for event in completed_steps)
+        )
+        self.assertTrue(
+            all(isinstance(event.data["first_response_ms"], int) for event in completed_steps)
+        )
         tool_message = albert.requests[1]["messages"][-1]
         self.assertEqual(tool_message["role"], "tool")
         self.assertEqual(tool_message["tool_call_id"], "call-1")
@@ -588,7 +639,7 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             agent, [ChatMessage(role="user", content="Organize the PDFs in Downloads")]
         )
 
-        self.assertEqual(events[-1].data, {"content": "I organized the PDFs."})
+        self.assertEqual(events[-1].data["content"], "I organized the PDFs.")
         self.assertEqual(python_agent.calls[0][0]["working_directory"], "Downloads")
         self.assertEqual(
             json.loads(albert.requests[1]["messages"][-1]["content"]),
@@ -658,7 +709,68 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             "python.transform",
             albert.requests[1]["messages"][0]["content"],
         )
-        self.assertEqual(events[-1].data, {"content": "I can handle that."})
+        self.assertEqual(events[-1].data["content"], "I can handle that.")
+        first_step = next(event for event in events if event.type == "step_start")
+        self.assertEqual(first_step.data["selection_phase"], "Block selection")
+        self.assertIsInstance(first_step.data["selection_duration_ms"], int)
+
+    async def test_finalizes_a_direct_specialist_response_without_second_model_call(self):
+        list_agent = FakeDirectListAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="example",
+                    description="Browse example items.",
+                    agents=(list_agent,),
+                )
+            ]
+        )
+        albert = FakeAlbertClient(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "id": "select-example",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps({"blocks": ["example"]}),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "list-example",
+                            "type": "function",
+                            "function": {
+                                "name": list_agent.name,
+                                "arguments": "{}",
+                            },
+                        }
+                    ]
+                },
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            block_registry=blocks,
+        )
+
+        events = await collect_events(
+            agent, [ChatMessage(role="user", content="What items do I have?")]
+        )
+
+        self.assertEqual(
+            events[-1].data["content"],
+            "You have **2 items**: Reports and Notes.txt.",
+        )
+        # Two orchestration calls (selection + tool choice). The final request is
+        # the post-response workflow suggestion, not another answer-generation pass.
+        self.assertEqual(len(albert.requests), 3)
+        self.assertEqual(albert.requests[2]["tools"], [])
 
     async def test_expands_blocks_after_an_artifact_for_a_cross_block_request(self):
         create_csv = FakeCreateCsvAgent()
@@ -770,8 +882,8 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            events[-1].data,
-            {"content": "I created the CSV and imported it into Grist."},
+            events[-1].data["content"],
+            "I created the CSV and imported it into Grist.",
         )
         self.assertEqual(import_csv.calls, [{"artifact": artifact}])
         first_planning_tools = {
@@ -789,6 +901,103 @@ class OrchestratorAgentTests(unittest.IsolatedAsyncioTestCase):
             '"media_type": "text/csv"',
             albert.requests[2]["messages"][-1]["content"],
         )
+
+    async def test_does_not_finish_before_all_requested_terminal_outcomes(self):
+        create_csv = FakeCreateCsvAgent()
+        import_csv = FakeGristImportAgent()
+        blocks = BlockRegistry(
+            [
+                AgentBlock(
+                    name="publishing",
+                    description="Create local data and publish it.",
+                    agents=(create_csv, import_csv),
+                )
+            ]
+        )
+        artifact = {
+            "kind": "file",
+            "location": "local",
+            "reference": "exports/sales.csv",
+            "media_type": "text/csv",
+            "name": "sales.csv",
+        }
+        selection = {
+            "blocks": ["publishing"],
+            "required_capabilities": ["local_create_csv", "grist_import_csv"],
+        }
+        albert = FakeAlbertClient(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "id": "select-initial",
+                            "type": "function",
+                            "function": {
+                                "name": "select_capability_blocks",
+                                "arguments": json.dumps(selection),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "create",
+                            "type": "function",
+                            "function": {
+                                "name": "local_create_csv",
+                                "arguments": json.dumps(
+                                    {"path": "exports/sales.csv"}
+                                ),
+                            },
+                        }
+                    ]
+                },
+                {
+                    "content": "The local file is ready."
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "id": "publish",
+                            "type": "function",
+                            "function": {
+                                "name": "grist_import_csv",
+                                "arguments": json.dumps({"artifact": artifact}),
+                            },
+                        }
+                    ]
+                },
+                {"content": "The file is ready and published."},
+            ]
+        )
+        agent = OrchestratorAgent(
+            albert,
+            model="canonical-model-id",
+            block_registry=blocks,
+            max_steps=5,
+        )
+
+        events = await collect_events(
+            agent,
+            [ChatMessage(role="user", content="Create the CSV and publish it")],
+        )
+
+        self.assertEqual(
+            events[-1].data["content"],
+            "The file is ready and published.",
+        )
+        self.assertEqual(import_csv.calls, [{"artifact": artifact}])
+        planning_after_early_answer = albert.requests[3]["messages"][-1]["content"]
+        self.assertIn("grist_import_csv", planning_after_early_answer)
+        selector_calls = [
+            request
+            for request in albert.requests
+            if request["tools"]
+            and request["tools"][0]["function"]["name"]
+            == "select_capability_blocks"
+        ]
+        self.assertEqual(len(selector_calls), 1)
 
     async def test_step_limit_returns_a_partial_answer_instead_of_an_error(self):
         python_agent = FakePythonAgent()

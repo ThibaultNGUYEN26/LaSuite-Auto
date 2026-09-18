@@ -13,6 +13,21 @@ from schemas import ChatMessage
 SELECTION_FUNCTION = "select_capability_blocks"
 
 
+class BlockSelection(tuple):
+    """Selected blocks plus terminal capabilities required by the user request."""
+
+    required_capabilities: tuple[str, ...]
+
+    def __new__(
+        cls,
+        blocks: tuple[str, ...],
+        required_capabilities: tuple[str, ...] = (),
+    ) -> "BlockSelection":
+        value = super().__new__(cls, blocks)
+        value.required_capabilities = required_capabilities
+        return value
+
+
 def _validated_selection(
     value: Any, available: tuple[str, ...]
 ) -> tuple[str, ...] | None:
@@ -29,8 +44,11 @@ def _validated_selection(
 
 
 def _selection_from_text(
-    content: str, available: tuple[str, ...]
-) -> tuple[str, ...] | None:
+    content: str,
+    available: tuple[str, ...],
+    available_capabilities: tuple[str, ...] = (),
+    capability_owners: dict[str, str] | None = None,
+) -> BlockSelection | None:
     clean = content.strip()
     if not clean:
         return None
@@ -41,10 +59,32 @@ def _selection_from_text(
         payload = json.loads(clean)
     except json.JSONDecodeError:
         mentioned = [name for name in available if name in clean]
-        return tuple(mentioned) if mentioned else None
+        return BlockSelection(tuple(mentioned)) if mentioned else None
     if isinstance(payload, dict):
-        payload = payload.get("blocks")
-    return _validated_selection(payload, available)
+        selected = _validated_selection(payload.get("blocks"), available)
+        if selected is None:
+            return None
+        required = _validated_selection(
+            payload.get("required_capabilities", []),
+            available_capabilities,
+        )
+        required = required or ()
+        selected = tuple(
+            dict.fromkeys(
+                (
+                    *selected,
+                    *(
+                        capability_owners[capability]
+                        for capability in required
+                        if capability_owners
+                        and capability in capability_owners
+                    ),
+                )
+            )
+        )
+        return BlockSelection(selected, required)
+    selected = _validated_selection(payload, available)
+    return BlockSelection(selected) if selected is not None else None
 
 
 class SelectionClient(Protocol):
@@ -66,7 +106,7 @@ async def select_blocks(
     blocks: BlockRegistry,
     execution_context: list[dict[str, Any]] | None = None,
     currently_selected: tuple[str, ...] = (),
-) -> tuple[str, ...]:
+) -> BlockSelection:
     """Choose blocks from compact manifests before exposing detailed tool schemas.
 
     The selector may be called again after a capability has run. This lets the
@@ -74,8 +114,18 @@ async def select_blocks(
     every installed tool visible to the planning model.
     """
     if not blocks.names:
-        return ()
+        return BlockSelection(())
     catalog = blocks.catalog()
+    available_capabilities = tuple(
+        capability["name"]
+        for block in catalog
+        for capability in block["capabilities"]
+    )
+    capability_owners = {
+        capability["name"]: block["name"]
+        for block in catalog
+        for capability in block["capabilities"]
+    }
     tools = [
         {
             "type": "function",
@@ -92,9 +142,21 @@ async def select_blocks(
                             "type": "array",
                             "items": {"type": "string", "enum": list(blocks.names)},
                             "uniqueItems": True,
-                        }
+                        },
+                        "required_capabilities": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": list(available_capabilities),
+                            },
+                            "uniqueItems": True,
+                            "description": (
+                                "Terminal actions explicitly required for the user's "
+                                "requested result. Exclude discovery and preparation."
+                            ),
+                        },
                     },
-                    "required": ["blocks"],
+                    "required": ["blocks", "required_capabilities"],
                     "additionalProperties": False,
                 },
             },
@@ -130,6 +192,12 @@ async def select_blocks(
         "PDFs, select the relevant file-source blocks even if no filename is given. "
         "When execution progress is supplied, choose every block that may still "
         "be needed to finish the original request. Do not execute the task. "
+        "Also identify required_capabilities: the terminal capabilities whose "
+        "successful results are necessary to satisfy outcomes explicitly requested "
+        "by the user. Include requested analyses, deliverables, uploads, imports, "
+        "messages, or other publications. Exclude file discovery, cache creation, "
+        "private preparation, and optional actions. A multi-destination request has "
+        "one required terminal capability per requested destination. "
         "Here is the compact block catalog:\n"
         + json.dumps(catalog, ensure_ascii=False)
     )
@@ -186,9 +254,27 @@ async def select_blocks(
             continue
         selected = _validated_selection(arguments.get("blocks"), blocks.names)
         if selected is not None:
-            return selected
+            required = _validated_selection(
+                arguments.get("required_capabilities", []),
+                available_capabilities,
+            )
+            required = required or ()
+            selected = tuple(
+                dict.fromkeys(
+                    (
+                        *selected,
+                        *(capability_owners[capability] for capability in required),
+                    )
+                )
+            )
+            return BlockSelection(selected, required)
 
-    selected = _selection_from_text("".join(content_parts), blocks.names)
+    selected = _selection_from_text(
+        "".join(content_parts),
+        blocks.names,
+        available_capabilities,
+        capability_owners,
+    )
     if selected is not None:
         return selected
 
@@ -198,7 +284,8 @@ async def select_blocks(
             "role": "system",
             "content": (
                 "The previous selection response was missing or malformed. Return "
-                "only JSON in this exact form: {\"blocks\": [\"block_name\"]}. "
+                "only JSON in this exact form: {\"blocks\": [\"block_name\"], "
+                "\"required_capabilities\": [\"capability_name\"]}. "
                 "Use only names from the catalog. An empty list is valid only when "
                 "the request needs no capability."
             ),
@@ -213,10 +300,15 @@ async def select_blocks(
     ):
         if chunk.get("type") == "content" and isinstance(chunk.get("delta"), str):
             retry_content.append(chunk["delta"])
-    selected = _selection_from_text("".join(retry_content), blocks.names)
+    selected = _selection_from_text(
+        "".join(retry_content),
+        blocks.names,
+        available_capabilities,
+        capability_owners,
+    )
     if selected is not None:
         return selected
 
     # Selector formatting failures must not become user-visible backend errors.
     # With no new tools, the planner can ask the user where the data is located.
-    return currently_selected
+    return BlockSelection(currently_selected)
